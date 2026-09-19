@@ -33,25 +33,25 @@ The frontend is built with **React 18**, **TypeScript**, and **Vite**, styled us
 
 ## 2. Component Hierarchy
 
-```
 App.tsx
 └── ThemeProvider (Dark Mode Forced)
     └── BrowserRouter
-        └── LandingPage.tsx
-            ├── EarthBackground.tsx (LOCKED Three.js WebGL Layer)
-            ├── Navbar.tsx
-            ├── main (Content Layer)
-            │   ├── Hero.tsx
-            │   ├── AboutSection.tsx
-            │   ├── ProblemSection.tsx
-            │   ├── VisionSection.tsx
-            │   ├── HowItWorksSection.tsx
-            │   ├── FeaturesSection.tsx
-            │   ├── ImpactSection.tsx
-            │   ├── FutureSection.tsx
-            │   └── CtaSection.tsx
-            └── Footer.tsx
-```
+        ├── Route "/" -> LandingPage.tsx
+        │   ├── EarthBackground.tsx (LOCKED Three.js WebGL Layer)
+        │   ├── Navbar.tsx
+        │   ├── main (Content Layer)
+        │   │   ├── Hero.tsx
+        │   │   ├── AboutSection.tsx
+        │   │   ├── ProblemSection.tsx
+        │   │   ├── VisionSection.tsx
+        │   │   ├── HowItWorksSection.tsx
+        │   │   ├── FeaturesSection.tsx
+        │   │   ├── ImpactSection.tsx
+        │   │   ├── FutureSection.tsx
+        │   │   └── Launch Console Button (Links to /investigation)
+        │   └── Footer.tsx
+        └── Route "/investigation" -> InvestigationPage.tsx
+            └── Investigation Gateway Console
 
 ---
 
@@ -189,14 +189,24 @@ App.tsx
 
 ---
 
-### 10. Investigation Gateway (`CtaSection.tsx`)
-* **Role**: Interactive call-to-action simulating how an analyst initiates an investigation.
+### 10. Launch Console Entry (Main Page Bottom)
+* **Role**: Minimal, clean transition at the bottom of the main narrative.
 * **Components & Behavior**:
-  * **Kicker**: `08 // INVESTIGATION GATEWAY`.
-  * **Photo Dropzone**: Mock file upload area specifying that image embeddings are processed in-memory only.
+  * Clean, restrained entry with the exact text `LAUNCH CONSOLE`.
+  * Navigates the user to the dedicated `/investigation` route.
+  * Preserves the existing design system without visual clutter.
+
+---
+
+### 11. Dedicated Investigation Gateway Page (`InvestigationPage.tsx` at `/investigation`)
+* **Role**: Functional console dedicated exclusively to running investigations.
+* **Components & Behavior**:
+  * **Minimal Top Bar**: Navigation back button (`← Back`) and brand link to `/`.
+  * **Title Hierarchy**: Simple, clear hierarchy headed by `INVESTIGATION GATEWAY`.
+  * **Photo Dropzone**: Upload area for consented subject photos (computed in-memory only).
   * **Seed Context Field**: Text input accepting names, handles, or profile URLs (e.g. `github.com/username`).
   * **Mandatory Consent Checkbox**: Must be checked to enable the submit button, reflecting the system's privacy gate.
-  * **Dispatch Action**: Triggers simulated submission to the `/api/analyze` backend endpoint.
+  * **Dispatch Action**: Triggers execution to the `/api/analyze` backend endpoint.
   * **Backend Ready Footnote**: Confirms connection to the FastAPI backend proxy.
 
 ---
@@ -215,7 +225,8 @@ App.tsx
 
 | File | Location | Purpose |
 |---|---|---|
-| `LandingPage.tsx` | [`frontend/src/components/landing/LandingPage.tsx`](file:///d:/NeuraX/frontend/src/components/landing/LandingPage.tsx) | Master container orchestrating all sections over the 3D Earth |
+| `LandingPage.tsx` | [`frontend/src/components/landing/LandingPage.tsx`](file:///d:/NeuraX/frontend/src/components/landing/LandingPage.tsx) | Master container orchestrating Sections 1-7 + Launch Console over 3D Earth |
+| `InvestigationPage.tsx` | [`frontend/src/components/landing/InvestigationPage.tsx`](file:///d:/NeuraX/frontend/src/components/landing/InvestigationPage.tsx) | Dedicated Investigation Gateway console page at `/investigation` |
 | `Navbar.tsx` | [`frontend/src/components/landing/Navbar.tsx`](file:///d:/NeuraX/frontend/src/components/landing/Navbar.tsx) | Sticky navigation with blur effect and mobile menu |
 | `Hero.tsx` | [`frontend/src/components/landing/Hero.tsx`](file:///d:/NeuraX/frontend/src/components/landing/Hero.tsx) | Option A top-centered hero layout |
 | `AboutSection.tsx` | [`frontend/src/components/landing/AboutSection.tsx`](file:///d:/NeuraX/frontend/src/components/landing/AboutSection.tsx) | Editorial introduction and core tenets |
@@ -225,7 +236,6 @@ App.tsx
 | `FeaturesSection.tsx` | [`frontend/src/components/landing/FeaturesSection.tsx`](file:///d:/NeuraX/frontend/src/components/landing/FeaturesSection.tsx) | 7-signal scoring matrix and verdict gates |
 | `ImpactSection.tsx` | [`frontend/src/components/landing/ImpactSection.tsx`](file:///d:/NeuraX/frontend/src/components/landing/ImpactSection.tsx) | Cybersecurity use cases (Threat Intel, Vetting) |
 | `FutureSection.tsx` | [`frontend/src/components/landing/FutureSection.tsx`](file:///d:/NeuraX/frontend/src/components/landing/FutureSection.tsx) | Ambition and future roadmap |
-| `CtaSection.tsx` | [`frontend/src/components/landing/CtaSection.tsx`](file:///d:/NeuraX/frontend/src/components/landing/CtaSection.tsx) | Investigation console gateway with consent gate |
 | `Footer.tsx` | [`frontend/src/components/landing/Footer.tsx`](file:///d:/NeuraX/frontend/src/components/landing/Footer.tsx) | Global footer with hackathon domain attribution |
 | `earth-background.tsx` | [`frontend/src/components/ui/earth-background.tsx`](file:///d:/NeuraX/frontend/src/components/ui/earth-background.tsx) | **LOCKED**: 3D Three.js WebGL Earth model |
 | `earth-textures.ts` | [`frontend/src/components/ui/earth-textures.ts`](file:///d:/NeuraX/frontend/src/components/ui/earth-textures.ts) | **LOCKED**: Planetary texture maps encoded as data URIs |

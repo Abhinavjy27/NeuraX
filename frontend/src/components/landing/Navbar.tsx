@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Menu, X, ArrowRight, ShieldCheck } from 'lucide-react';
 
 interface NavbarProps {
@@ -6,6 +7,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onExplore }) => {
+  const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -122,7 +124,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onExplore }) => {
         {/* Desktop Action */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }} className="neurax-desktop-actions">
           <button
-            onClick={() => scrollTo('cta')}
+            onClick={() => navigate('/investigation')}
             className="neurax-btn-primary"
             style={{ fontSize: '0.82rem', padding: '8px 18px' }}
           >
@@ -186,7 +188,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onExplore }) => {
           </button>
           <div style={{ paddingTop: 12, borderTop: '1px solid rgba(255, 255, 255, 0.1)', marginTop: 8 }}>
             <button
-              onClick={() => scrollTo('cta')}
+              onClick={() => {
+                setMobileOpen(false);
+                navigate('/investigation');
+              }}
               className="neurax-btn-primary"
               style={{ width: '100%', justifyContent: 'center' }}
             >

@@ -9,7 +9,7 @@ import { HowItWorksSection } from './HowItWorksSection';
 import { FeaturesSection } from './FeaturesSection';
 import { ImpactSection } from './ImpactSection';
 import { FutureSection } from './FutureSection';
-import { CtaSection } from './CtaSection';
+import { Link } from 'react-router-dom';
 import { Footer } from './Footer';
 
 export const LandingPage: React.FC = () => {
@@ -61,8 +61,24 @@ export const LandingPage: React.FC = () => {
           {/* FUTURE & AMBITION */}
           <FutureSection />
 
-          {/* CALL TO ACTION / GATEWAY */}
-          <CtaSection />
+          {/* LAUNCH CONSOLE ENTRY */}
+          <div style={{ textAlign: 'center', padding: '20px 24px 80px' }}>
+            <Link
+              to="/investigation"
+              className="neurax-btn-primary"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '14px 32px',
+                fontSize: '0.95rem',
+                letterSpacing: '0.04em',
+                textDecoration: 'none',
+              }}
+            >
+              LAUNCH CONSOLE
+            </Link>
+          </div>
         </div>
       </main>
 
