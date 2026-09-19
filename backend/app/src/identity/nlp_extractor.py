@@ -27,8 +27,11 @@ def extract_entities(text: str) -> Dict[str, List[str]]:
         
     if nlp is None:
         # Fallback if model isn't loaded (e.g. during build/test before download)
-        # We just assume the first word might be a person to not break the pipeline
-        results["persons"].append(text.split()[0].strip(',.'))
+        # We just assume the full string is a name if it's short enough
+        if len(text.split()) <= 3:
+            results["persons"].append(text.strip(',.'))
+        else:
+            results["persons"].append(text.split()[0].strip(',.'))
         return results
 
     doc = nlp(text)

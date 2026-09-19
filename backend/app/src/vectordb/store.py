@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 # Fetch the persist directory from the environment, defaulting to local app/data
-PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "/app/data/vectordb")
+PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/vectordb")
 
 # Initialize ChromaDB in Persistent mode
 try:
@@ -20,11 +20,19 @@ try:
         name="faces",
         metadata={"hnsw:space": "cosine"}
     )
+    bios_collection = client.get_or_create_collection(
+        name="bios",
+        metadata={"hnsw:space": "cosine"}
+    )
     logger.info(f"Initialized ChromaDB at {PERSIST_DIR}")
 except Exception as e:
     logger.error(f"Failed to initialize ChromaDB: {e}")
     client = None
     faces_collection = None
+    bios_collection = None
+
+def get_collection():
+    return bios_collection
 
 
 def upsert_face(face_id: str, embedding: List[float], metadata: Dict[str, Any] = None):

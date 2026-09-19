@@ -28,8 +28,11 @@ async def resolve_identity(candidate_name: str, scraping_results: Dict[str, Any]
       "confidence": float between 0.0 and 1.0,
       "verification_method": "llm_entity_resolution",
       "conflicts": [{"conflicting_claim": "...", "source_url": "...", "confidence": 0.0}],
+      "rejected_platforms": ["List of platforms that describe completely different people or are false positive generic matches"],
       "last_verified": "2026-09-19"
     }
+    
+    CRITICAL INSTRUCTION: You MUST add ANY platform from 'links' to `rejected_platforms` if it does not have corresponding rich bio/snippet context provided in the signals. Do NOT guess or assume generic URLs belong to the subject unless you have OSINT data to prove it. You must be AGGRESSIVE in rejecting platforms.
     """
 
     user_prompt = f"""
@@ -71,5 +74,6 @@ def mock_resolve_identity(candidate_name: str, scraping_results: Dict[str, Any])
         "confidence": 0.75,
         "verification_method": "mock_resolution_fallback",
         "conflicts": [],
+        "rejected_platforms": [],
         "last_verified": "2026-09-19"
     }

@@ -86,6 +86,7 @@ async def result(job_id: str):
 
 async def emit(job_id: str, event: PipelineEvent):
     """Push a pipeline event to the SSE queue for this job."""
+    print(f"[{job_id}] {event.step.upper()}: {event.message}")
     if job_id in job_streams:
         await job_streams[job_id].put(event.model_dump())
 
@@ -154,16 +155,46 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 message=f"⚠️ No GitHub profile found for '{candidate_username}'.",
             ))
             
-        # Native Username Checker (API-Free)
+        # OSINT & Native Username Checker
         from app.src.scraping.username_checker import check_all_platforms
+        from app.src.scraping.scholar_search import search_google_scholar
+        from app.src.scraping.twitter_search import search_twitter_profile
+        from app.src.scraping.linkedin_scraper import search_linkedin_profile
         
         await emit(job_id, PipelineEvent(
             type="PROGRESS", step="scraping",
-            message=f"🌐 Hunting for username '{candidate_username}' across 120+ platforms (API-Free)...",
+            message=f"🌐 Hunting for username '{candidate_username}' across OSINT and 120+ platforms...",
         ))
         
-        found_platforms = await check_all_platforms(candidate_username)
+        found_platforms, scholar_data, twitter_data, linkedin_data = await asyncio.gather(
+            check_all_platforms(candidate_username),
+            search_google_scholar(candidate_username),
+            search_twitter_profile(candidate_username),
+            search_linkedin_profile(candidate_username)
+        )
         
+        if scholar_data:
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="scraping",
+                message=f"🎓 Found Google Scholar profile for '{candidate_username}'",
+                data=scholar_data,
+                confidence=0.8
+            ))
+        if twitter_data:
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="scraping",
+                message=f"🐦 Found Twitter/X handle: @{twitter_data.get('handle')}",
+                data=twitter_data,
+                confidence=0.7
+            ))
+        if linkedin_data:
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="scraping",
+                message=f"💼 Found LinkedIn profile match via OSINT",
+                data=linkedin_data,
+                confidence=0.75
+            ))
+            
         if found_platforms:
             platforms_str = ", ".join(found_platforms.keys())
             await emit(job_id, PipelineEvent(
@@ -216,6 +247,16 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 type="PROGRESS", step="vectordb",
                 message="⚠️ No face embedding available to search in Vector DB.",
             ))
+            
+        from app.src.vectordb.bio_search import search_bio
+        if github_data and github_data.get("bio"):
+            bio_matches = search_bio(github_data["bio"])
+            if bio_matches:
+                 await emit(job_id, PipelineEvent(
+                    type="FINDING", step="vectordb",
+                    message=f"🔍 Found {len(bio_matches)} similar profiles based on bio text.",
+                    confidence=0.6
+                ))
 
         # ── Layer 4: Entity Resolution Agent ─────────────────────────────────
         await emit(job_id, PipelineEvent(
@@ -224,11 +265,41 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         ))
         
         from app.src.correlation.entity_resolution_agent import resolve_identity
+        from app.src.correlation.username_matcher import match_usernames
+        from app.src.correlation.bio_fingerprint import match_bios
+        
+        if 'twitter_data' in locals() and twitter_data and github_data:
+            username_score = match_usernames(twitter_data.get("handle", ""), github_data.get("login", ""))
+            if username_score > 0.8:
+                await emit(job_id, PipelineEvent(
+                    type="FINDING", step="correlation",
+                    message=f"🔗 High username similarity ({username_score:.2f}) between GitHub and Twitter.",
+                    confidence=username_score
+                ))
         
         db_match_data = match if (embedding and 'match' in locals()) else {}
         scraping_data = {"links": found_platforms} if 'found_platforms' in locals() and found_platforms else {}
         
+        # Include rich context for LLM filtering
+        if 'github_data' in locals() and github_data: scraping_data['github_context'] = github_data
+        if 'twitter_data' in locals() and twitter_data: scraping_data['twitter_context'] = twitter_data
+        if 'linkedin_data' in locals() and linkedin_data: scraping_data['linkedin_context'] = linkedin_data
+        if 'scholar_data' in locals() and scholar_data: scraping_data['scholar_context'] = scholar_data
+        
         evidence = await resolve_identity(candidate_username, scraping_data, db_match_data)
+        
+        # Filter rejected platforms to prevent false positives in output
+        rejected = evidence.get("rejected_platforms", [])
+        if rejected and 'found_platforms' in locals():
+            for platform in rejected:
+                if platform in found_platforms:
+                    del found_platforms[platform]
+                    
+            if rejected:
+                await emit(job_id, PipelineEvent(
+                    type="PROGRESS", step="entity_resolution",
+                    message=f"🗑️ LLM rejected {len(rejected)} platforms as false positives: {', '.join(rejected)}"
+                ))
         
         await emit(job_id, PipelineEvent(
             type="FINDING", step="entity_resolution",
@@ -317,15 +388,14 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         ))
 
     except Exception as e:
-        job_store[job_id] = {"status": "error", "result": str(e)}
-        await emit(job_id, PipelineEvent(
-            type="ERROR", step="unknown",
-            message=f"❌ Pipeline failed: {str(e)}",
-        ))
-
+        print(f"Pipeline error: {e}")
+        error_event = PipelineEvent(type="ERROR", step="identity", message=str(e))
+        if job_id in job_streams:
+            await job_streams[job_id].put(error_event)
+            await job_streams[job_id].put(None)
     finally:
-        # Signal end of stream
-        await job_streams[job_id].put(None)
+        if job_id in job_streams:
+            await job_streams[job_id].put(None)
 
 
 async def event_generator(job_id: str) -> AsyncGenerator:
