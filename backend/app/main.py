@@ -257,7 +257,25 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             type="PROGRESS", step="evidence",
             message="📋 Attaching sources and confidence scores...",
         ))
-        await asyncio.sleep(0.2)
+        
+        from app.src.evidence.confidence_scorer import score_evidence
+        from app.src.evidence.conflict_detector import detect_conflicts
+        from app.src.evidence.source_attacher import attach_source
+        
+        evidence = score_evidence(evidence)
+        conflicts = detect_conflicts([evidence])
+        
+        # Attach source url if not already fully formed
+        if not evidence.get("source_url") or evidence.get("source_url") == "github.com":
+            if scraping_data.get("links"):
+                first_platform = list(scraping_data["links"].keys())[0]
+                evidence["source_url"] = attach_source(first_platform, candidate_username)
+                
+        if conflicts:
+            await emit(job_id, PipelineEvent(
+                type="PROGRESS", step="evidence",
+                message=f"⚠️ Conflicts detected: {', '.join(conflicts)}",
+            ))
 
         # ── Layer 7: Output ──────────────────────────────────────────────────
         await emit(job_id, PipelineEvent(
@@ -265,13 +283,29 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             message="📊 Generating identity profile, timeline, and report...",
         ))
         
+        from app.src.output.profile_renderer import render_profile
+        from app.src.output.timeline_builder import build_timeline
+        from app.src.output.report_generator import generate_markdown_report
+        
+        timeline = build_timeline(evidence, list(scraping_data.get("links", {}).keys()))
+        profile = render_profile(
+            candidate_username, 
+            evidence.get("confidence", 0.0), 
+            list(scraping_data.get("links", {}).keys()), 
+            evidence, 
+            graph_data
+        )
+        report_md = generate_markdown_report(profile, timeline)
+        
         # ── Done ─────────────────────────────────────────────────────────────
         result = {
             "status": "complete",
-            "identity": {"name": candidate_username, "confidence": evidence.get("confidence", 0.0)},
-            "platforms_found": list(scraping_data.get("links", {}).keys()),
+            "identity": profile["identity"],
+            "platforms_found": profile["platforms"],
             "evidence": evidence,
             "graph": graph_data,
+            "timeline": timeline,
+            "report": report_md
         }
         job_store[job_id] = {"status": "complete", "result": result}
 
