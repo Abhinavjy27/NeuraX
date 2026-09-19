@@ -334,7 +334,7 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 elif "github.com" in url:
                     plat = "github"
                     
-                profiles.append({"platform": plat, "username": candidate_name, "url": item["url"], "snippet": item.get("snippet", ""), "confidence": 0.5})
+                profiles.append({"platform": plat, "username": candidate_name, "url": item["url"], "snippet": item.get("snippet", ""), "confidence": 0.7})
 
         # ── Face Cross-Verification ──────────────────────────────────────────
         # If the user uploaded a probe image, download each profile's photo and

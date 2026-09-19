@@ -70,6 +70,7 @@ async def search_news_and_web(query: str) -> dict:
         
         seen_socials = set()
         seen_urls = set()
+        seen_domains = set()
         
         for i, res in enumerate(raw_results):
             url = res['url'].lower()
@@ -82,7 +83,7 @@ async def search_news_and_web(query: str) -> dict:
             # Allow all social profiles to pass through, but deduplicate by platform
             # and filter out non-profile links (like posts or directories)
             is_social = False
-            for platform in ["twitter.com", "instagram.com", "github.com", "linkedin.com", "tiktok.com", "youtube.com", "reddit.com", "facebook.com"]:
+            for platform in ["twitter.com", "instagram.com", "github.com", "linkedin.com", "tiktok.com", "youtube.com", "reddit.com", "facebook.com", "scholar.google.com"]:
                 if platform in url:
                     is_social = True
                     # If it's linkedin, only allow actual profiles
@@ -96,6 +97,18 @@ async def search_news_and_web(query: str) -> dict:
                     
             if is_social:
                 continue
+                
+            # Domain deduplication for generic non-social websites
+            try:
+                domain = urllib.parse.urlparse(url).netloc
+                if domain.startswith("www."):
+                    domain = domain[4:]
+            except Exception:
+                domain = url
+                
+            if domain and domain in seen_domains:
+                continue
+            seen_domains.add(domain)
                 
             # Heuristic for news vs web
             if "news" in url or "article" in url or "post" in url:
