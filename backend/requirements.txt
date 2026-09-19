@@ -27,7 +27,7 @@ beautifulsoup4==4.12.3
 lxml==5.2.2                 # fast HTML parser for BS4
 instaloader==4.11.0         # Instagram public profiles
 scholarly==1.7.11           # Google Scholar (unofficial scraper)
-duckduckgo-search==6.1.9    # search engine dorking — no key required
+duckduckgo-search          # search engine dorking — no key required
 
 # ─── Vector DB ─────────────────────────────────────────────────────────────────
 chromadb==0.5.3
