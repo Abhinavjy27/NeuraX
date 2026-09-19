@@ -26,9 +26,11 @@ def extract_entities(text: str) -> Dict[str, List[str]]:
         return results
         
     if nlp is None:
-        # Fallback if model isn't loaded (e.g. during build/test before download)
-        # We just assume the full string is a name if it's short enough
-        if len(text.split()) <= 3:
+        import re
+        match = re.search(r'\b[A-Z][a-z]+\s[A-Z][a-z]+\b', text)
+        if match:
+            results["persons"].append(match.group(0))
+        elif len(text.split()) <= 3:
             results["persons"].append(text.strip(',.'))
         else:
             results["persons"].append(text.split()[0].strip(',.'))
@@ -60,9 +62,13 @@ def get_primary_candidate(text: str) -> str:
     """
     entities = extract_entities(text)
     if entities["persons"]:
-        # Return the first person found, formatted as a potential username (lowercase, no spaces)
-        # e.g. "Linus Torvalds" -> "linustorvalds"
-        return entities["persons"][0].replace(" ", "").lower()
+        return entities["persons"][0]
+    
+    # Fallback: Find first capitalized two-word phrase
+    import re
+    match = re.search(r'\b[A-Z][a-z]+\s[A-Z][a-z]+\b', text)
+    if match:
+        return match.group(0)
     
     # Ultimate fallback
-    return text.split()[0].lower().strip(".,")
+    return text.split()[0].strip(".,")

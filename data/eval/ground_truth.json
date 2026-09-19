@@ -1,0 +1,23 @@
+[
+  {
+    "id": "subject_01",
+    "name": "Linus Torvalds",
+    "context": "Creator of Linux, software engineer, Open Source, works at Linux Foundation",
+    "expected_verdict": "confirmed",
+    "expected_profiles": ["github", "wikipedia"]
+  },
+  {
+    "id": "subject_02",
+    "name": "Yann LeCun",
+    "context": "VP and Chief AI Scientist at Meta, Turing Award winner",
+    "expected_verdict": "confirmed",
+    "expected_profiles": ["twitter", "wikipedia", "scholar"]
+  },
+  {
+    "id": "subject_03_imposter",
+    "name": "Linus Torvalds",
+    "context": "A student named Linus Torvalds studying at a local high school, not related to Linux",
+    "expected_verdict": "insufficient_evidence",
+    "expected_profiles": []
+  }
+]

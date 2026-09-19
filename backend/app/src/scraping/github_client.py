@@ -15,15 +15,26 @@ HEADERS = {
 if GITHUB_TOKEN:
     HEADERS["Authorization"] = f"token {GITHUB_TOKEN}"
 
-async def get_github_profile(username: str) -> Optional[Dict[str, Any]]:
+async def get_github_profile(query: str, is_email: bool = False) -> Optional[Dict[str, Any]]:
     """
-    Fetch the public GitHub profile, organizations, and top repositories for a given username.
-    Returns None if the user does not exist or rate limits are hit.
+    Search GitHub for a user by email or name, then fetch their profile.
     """
-    base_url = f"https://api.github.com/users/{username}"
+    search_q = f"{query} in:email" if is_email else f'"{query}" in:name'
+    search_url = f"https://api.github.com/search/users?q={search_q}&per_page=1"
     
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
+            # 0. Search for the user
+            search_resp = await client.get(search_url, headers=HEADERS)
+            search_resp.raise_for_status()
+            search_data = search_resp.json()
+            
+            if not search_data.get("items"):
+                return None
+                
+            username = search_data["items"][0]["login"]
+            base_url = f"https://api.github.com/users/{username}"
+            
             # 1. Get Base Profile
             profile_resp = await client.get(base_url, headers=HEADERS)
             if profile_resp.status_code == 404:
@@ -81,8 +92,8 @@ async def get_github_profile(username: str) -> Optional[Dict[str, Any]]:
             if e.response.status_code == 403 and "rate limit" in e.response.text.lower():
                 logger.warning("GitHub API rate limit exceeded.")
             else:
-                logger.error(f"GitHub API error for {username}: {e}")
+                logger.error(f"GitHub API error for {query}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Failed to scrape GitHub for {username}: {e}")
+            logger.error(f"Failed to scrape GitHub for {query}: {e}")
             return None

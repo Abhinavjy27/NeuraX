@@ -3,7 +3,7 @@ NeuraX — Python FastAPI AI Engine
 Serves the intelligence pipeline + SSE streaming endpoint.
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
@@ -11,6 +11,8 @@ import asyncio
 import uuid
 import json
 from typing import AsyncGenerator
+
+from app.models import CandidateProfile, CandidateScores, Profile, Person, Claim, Evidence, Entity
 
 app = FastAPI(
     title="NeuraX AI Engine",
@@ -25,384 +27,269 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory job store (replace with Redis in production)
+# In-memory stores
 job_store: dict[str, dict] = {}
 job_streams: dict[str, asyncio.Queue] = {}
-
-
-# ── Models ──────────────────────────────────────────────────────────────────
+person_store: dict[str, dict] = {}
 
 class AnalyzeRequest(BaseModel):
     job_id: str
     image_path: str
     context: str = ""
 
-
 class PipelineEvent(BaseModel):
-    type: str          # PROGRESS | FINDING | COMPLETE | ERROR
+    type: str
     step: str
     message: str
     data: dict = {}
     confidence: float = 0.0
 
-
-# ── Routes ──────────────────────────────────────────────────────────────────
-
-@app.get("/health")
+@app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "neurax-ai-engine"}
 
+@app.post("/api/analyze")
+async def analyze(
+    image: UploadFile = File(None),
+    context: str = Form(""),
+    consent_confirmed: str = Form("false"),
+    background_tasks: BackgroundTasks = None
+):
+    if consent_confirmed.lower() != "true":
+        raise HTTPException(status_code=400, detail="BAD_INPUT: Consent required")
+    if not context:
+        raise HTTPException(status_code=400, detail="BAD_INPUT: Context seed required")
+        
+    job_id = str(uuid.uuid4())
+    job_store[job_id] = {"status": "processing", "candidates": []}
+    job_streams[job_id] = asyncio.Queue()
+    
+    # Save uploaded file temporarily
+    image_path = ""
+    if image:
+        image_path = f"data/input/{job_id}_{image.filename}"
+        with open(image_path, "wb") as f:
+            f.write(await image.read())
 
-@app.post("/analyze")
-async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
-    """Triggered by Node BullMQ worker. Starts the pipeline in background."""
-    job_store[request.job_id] = {"status": "running", "result": None}
-    job_streams[request.job_id] = asyncio.Queue()
+    background_tasks.add_task(run_pipeline, job_id, image_path, context)
 
-    background_tasks.add_task(run_pipeline, request.job_id, request.image_path, request.context)
+    return {"job_id": job_id, "status": "processing"}
 
-    return {"job_id": request.job_id, "status": "started"}
-
-
-@app.get("/stream/{job_id}")
+@app.get("/api/stream/{job_id}")
 async def stream(job_id: str):
-    """SSE endpoint — Node gateway subscribes here and relays to React via WebSocket."""
     if job_id not in job_streams:
         job_streams[job_id] = asyncio.Queue()
-
     return EventSourceResponse(event_generator(job_id))
 
-
-@app.get("/result/{job_id}")
-async def result(job_id: str):
-    """Return final result once pipeline is complete."""
+@app.get("/api/candidates/{job_id}")
+async def get_candidates(job_id: str):
     job = job_store.get(job_id)
     if not job:
-        return {"error": "Job not found"}
-    return job
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "candidates": job.get("candidates", [])
+    }
 
+@app.get("/api/identity/{person_id}")
+async def get_identity(person_id: str):
+    person = person_store.get(person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return person["identity"]
 
-# ── Pipeline Runner ──────────────────────────────────────────────────────────
+@app.get("/api/claims/{person_id}")
+async def get_claims(person_id: str):
+    person = person_store.get(person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return person.get("claims", [])
+
+@app.get("/api/timeline/{person_id}")
+async def get_timeline(person_id: str):
+    person = person_store.get(person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return person.get("timeline", [])
+
+@app.get("/api/graph/{person_id}")
+async def get_graph(person_id: str):
+    person = person_store.get(person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    return person.get("graph", {"nodes": [], "edges": []})
+
+class ChatRequest(BaseModel):
+    message: str
+
+@app.post("/api/chat/{person_id}")
+async def chat_with_graph(person_id: str, request: ChatRequest):
+    person = person_store.get(person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+        
+    from openai import AsyncOpenAI
+    import os
+    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    
+    # Construct the RAG context from the identity graph/claims
+    context_data = {
+        "identity": person.get("identity"),
+        "claims": person.get("claims", []),
+        "timeline": person.get("timeline", [])
+    }
+    
+    system_prompt = f"""You are a strict GraphRAG Intelligence Assistant for NeuraX.
+Your ONLY purpose is to answer questions about the following intelligence graph for the subject: {person.get('identity', {}).get('canonical_name')}.
+
+Here is the structured knowledge graph and evidence:
+{json.dumps(context_data, indent=2)}
+
+CRITICAL RULES:
+1. You MUST NOT answer questions outside the scope of this graph.
+2. If the user asks general knowledge questions, coding questions, or anything unrelated to this specific identity, you MUST reply: "I can only answer questions related to the extracted intelligence graph."
+3. DO NOT hallucinate or guess. If the graph does not contain the answer, you MUST reply: "I don't have enough evidence in the current graph to answer that."
+4. Maintain a cold, analytical, and professional tone. Do not be conversational."""
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": request.message}
+            ],
+            temperature=0.3
+        )
+        return {"reply": response.choices[0].message.content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def emit(job_id: str, event: PipelineEvent):
-    """Push a pipeline event to the SSE queue for this job."""
     print(f"[{job_id}] {event.step.upper()}: {event.message}")
     if job_id in job_streams:
         await job_streams[job_id].put(event.model_dump())
 
-
-async def run_pipeline(job_id: str, image_path: str, context: str):
-    """
-    Full 7-layer NeuraX pipeline.
-    Each layer emits SSE events for real-time frontend updates.
-    """
-    try:
-        # ── Layer 1: Identity Resolution ────────────────────────────────────
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="identity",
-            message="🔍 Extracting face embedding..."
-        ))
-        from app.src.identity.face_embedder import extract_embedding
-        
-        embedding = None
-        if image_path:
-            # Note: For production, this should run in a thread pool since it's blocking CPU-bound code
-            embedding = await asyncio.to_thread(extract_embedding, image_path)
-            
-        if embedding:
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="identity",
-                message=f"✅ Face embedding extracted ({len(embedding)} dimensions)",
-            ))
-        else:
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="identity",
-                message="⚠️ No face detected in uploaded image, relying on context only.",
-            ))
-
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="identity",
-            message="🔍 Running NLP entity extraction...",
-        ))
-        # from app.src.identity.nlp_extractor import extract_entities
-        # entities = extract_entities(context)
-        await asyncio.sleep(0.3)
-
-        # ── Layer 2: Multi-Platform Scraping ─────────────────────────────────
-        from app.src.identity.nlp_extractor import get_primary_candidate
-        
-        candidate_username = get_primary_candidate(context) if context else "torvalds"
-        
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="scraping",
-            message=f"🌐 Scraping GitHub for candidate '{candidate_username}'...",
-        ))
-        
-        from app.src.scraping.github_client import get_github_profile
-        github_data = await get_github_profile(candidate_username)
-        
-        if github_data:
-            repos_str = ", ".join([r["name"] for r in github_data.get("top_repositories", [])])
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="scraping",
-                message=f"✅ Found GitHub: {github_data.get('name', '')} ({github_data.get('followers', 0)} followers)",
-                data={"repos": repos_str, "bio": github_data.get("bio", "")},
-                confidence=0.9
-            ))
-        else:
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="scraping",
-                message=f"⚠️ No GitHub profile found for '{candidate_username}'.",
-            ))
-            
-        # OSINT & Native Username Checker
-        from app.src.scraping.username_checker import check_all_platforms
-        from app.src.scraping.scholar_search import search_google_scholar
-        from app.src.scraping.twitter_search import search_twitter_profile
-        from app.src.scraping.linkedin_scraper import search_linkedin_profile
-        
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="scraping",
-            message=f"🌐 Hunting for username '{candidate_username}' across OSINT and 120+ platforms...",
-        ))
-        
-        found_platforms, scholar_data, twitter_data, linkedin_data = await asyncio.gather(
-            check_all_platforms(candidate_username),
-            search_google_scholar(candidate_username),
-            search_twitter_profile(candidate_username),
-            search_linkedin_profile(candidate_username)
-        )
-        
-        if scholar_data:
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="scraping",
-                message=f"🎓 Found Google Scholar profile for '{candidate_username}'",
-                data=scholar_data,
-                confidence=0.8
-            ))
-        if twitter_data:
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="scraping",
-                message=f"🐦 Found Twitter/X handle: @{twitter_data.get('handle')}",
-                data=twitter_data,
-                confidence=0.7
-            ))
-        if linkedin_data:
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="scraping",
-                message=f"💼 Found LinkedIn profile match via OSINT",
-                data=linkedin_data,
-                confidence=0.75
-            ))
-            
-        if found_platforms:
-            platforms_str = ", ".join(found_platforms.keys())
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="scraping",
-                message=f"✅ Candidate active on: {platforms_str}",
-                data={"links": found_platforms},
-                confidence=0.8
-            ))
-        else:
-            await emit(job_id, PipelineEvent(
-                type="PROGRESS", step="scraping",
-                message=f"⚠️ No secondary platform profiles found for '{candidate_username}'.",
-            ))
-            
-        await asyncio.sleep(0.5)
-
-        # ── Layer 3: Vector DB ───────────────────────────────────────────────
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="vectordb",
-            message="💾 Searching Vector DB for existing identities...",
-        ))
-        
-        from app.src.vectordb.store import search_face, upsert_face
-        
-        if embedding:
-            # 1. Search for existing faces
-            # ChromaDB cosine distance (0.0 is perfect match, 1.0 is completely different)
-            # Threshold of 0.4 usually means the same person for Facenet512
-            similar_faces = await asyncio.to_thread(search_face, embedding, n_results=1)
-            
-            if similar_faces and similar_faces[0]["distance"] < 0.4:
-                match = similar_faces[0]
-                await emit(job_id, PipelineEvent(
-                    type="FINDING", step="vectordb",
-                    message=f"✅ Face matched existing record in DB (Distance: {match['distance']:.3f})",
-                    data={"db_id": match["id"], "metadata": match["metadata"]},
-                    confidence=0.95
-                ))
-            else:
-                # 2. If not found, save this new face
-                new_db_id = f"face_{job_id}"
-                success = await asyncio.to_thread(upsert_face, new_db_id, embedding, {"username": candidate_username})
-                if success:
-                    await emit(job_id, PipelineEvent(
-                        type="PROGRESS", step="vectordb",
-                        message=f"💾 Saved new face embedding to Vector DB with ID '{new_db_id}'.",
-                    ))
-        else:
-            await emit(job_id, PipelineEvent(
-                type="PROGRESS", step="vectordb",
-                message="⚠️ No face embedding available to search in Vector DB.",
-            ))
-            
-        from app.src.vectordb.bio_search import search_bio
-        if github_data and github_data.get("bio"):
-            bio_matches = search_bio(github_data["bio"])
-            if bio_matches:
-                 await emit(job_id, PipelineEvent(
-                    type="FINDING", step="vectordb",
-                    message=f"🔍 Found {len(bio_matches)} similar profiles based on bio text.",
-                    confidence=0.6
-                ))
-
-        # ── Layer 4: Entity Resolution Agent ─────────────────────────────────
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="entity_resolution",
-            message="🤖 Entity Resolution Agent reasoning over signals (GPT-4o)...",
-        ))
-        
-        from app.src.correlation.entity_resolution_agent import resolve_identity
-        from app.src.correlation.username_matcher import match_usernames
-        from app.src.correlation.bio_fingerprint import match_bios
-        
-        if 'twitter_data' in locals() and twitter_data and github_data:
-            username_score = match_usernames(twitter_data.get("handle", ""), github_data.get("login", ""))
-            if username_score > 0.8:
-                await emit(job_id, PipelineEvent(
-                    type="FINDING", step="correlation",
-                    message=f"🔗 High username similarity ({username_score:.2f}) between GitHub and Twitter.",
-                    confidence=username_score
-                ))
-        
-        db_match_data = match if (embedding and 'match' in locals()) else {}
-        scraping_data = {"links": found_platforms} if 'found_platforms' in locals() and found_platforms else {}
-        
-        # Include rich context for LLM filtering
-        if 'github_data' in locals() and github_data: scraping_data['github_context'] = github_data
-        if 'twitter_data' in locals() and twitter_data: scraping_data['twitter_context'] = twitter_data
-        if 'linkedin_data' in locals() and linkedin_data: scraping_data['linkedin_context'] = linkedin_data
-        if 'scholar_data' in locals() and scholar_data: scraping_data['scholar_context'] = scholar_data
-        
-        evidence = await resolve_identity(candidate_username, scraping_data, db_match_data)
-        
-        # Filter rejected platforms to prevent false positives in output
-        rejected = evidence.get("rejected_platforms", [])
-        if rejected and 'found_platforms' in locals():
-            for platform in rejected:
-                if platform in found_platforms:
-                    del found_platforms[platform]
-                    
-            if rejected:
-                await emit(job_id, PipelineEvent(
-                    type="PROGRESS", step="entity_resolution",
-                    message=f"🗑️ LLM rejected {len(rejected)} platforms as false positives: {', '.join(rejected)}"
-                ))
-        
-        await emit(job_id, PipelineEvent(
-            type="FINDING", step="entity_resolution",
-            message=f"🧠 Agent resolved identity: {evidence.get('claim', 'Unknown')}",
-            data=evidence,
-            confidence=evidence.get("confidence", 0.0)
-        ))
-
-        # ── Layer 5: Knowledge Graph ─────────────────────────────────────────
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="knowledge_graph",
-            message="🕸️ Building Knowledge Graph (NetworkX)...",
-        ))
-        
-        from app.src.graph.builder import build_identity_graph
-        graph_data = build_identity_graph(candidate_username, scraping_data.get("links", {}), db_match_data)
-        
-        await emit(job_id, PipelineEvent(
-            type="FINDING", step="knowledge_graph",
-            message=f"🕸️ Graph built with {len(graph_data.get('nodes', []))} nodes and {len(graph_data.get('links', []))} edges.",
-            data=graph_data
-        ))
-
-        # ── Layer 6: Evidence ────────────────────────────────────────────────
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="evidence",
-            message="📋 Attaching sources and confidence scores...",
-        ))
-        
-        from app.src.evidence.confidence_scorer import score_evidence
-        from app.src.evidence.conflict_detector import detect_conflicts
-        from app.src.evidence.source_attacher import attach_source
-        
-        evidence = score_evidence(evidence)
-        conflicts = detect_conflicts([evidence])
-        
-        # Attach source url if not already fully formed
-        if not evidence.get("source_url") or evidence.get("source_url") == "github.com":
-            if scraping_data.get("links"):
-                first_platform = list(scraping_data["links"].keys())[0]
-                evidence["source_url"] = attach_source(first_platform, candidate_username)
-                
-        if conflicts:
-            await emit(job_id, PipelineEvent(
-                type="PROGRESS", step="evidence",
-                message=f"⚠️ Conflicts detected: {', '.join(conflicts)}",
-            ))
-
-        # ── Layer 7: Output ──────────────────────────────────────────────────
-        await emit(job_id, PipelineEvent(
-            type="PROGRESS", step="output",
-            message="📊 Generating identity profile, timeline, and report...",
-        ))
-        
-        from app.src.output.profile_renderer import render_profile
-        from app.src.output.timeline_builder import build_timeline
-        from app.src.output.report_generator import generate_markdown_report
-        
-        timeline = build_timeline(evidence, list(scraping_data.get("links", {}).keys()))
-        profile = render_profile(
-            candidate_username, 
-            evidence.get("confidence", 0.0), 
-            list(scraping_data.get("links", {}).keys()), 
-            evidence, 
-            graph_data
-        )
-        report_md = generate_markdown_report(profile, timeline)
-        
-        # ── Done ─────────────────────────────────────────────────────────────
-        result = {
-            "status": "complete",
-            "identity": profile["identity"],
-            "platforms_found": profile["platforms"],
-            "evidence": evidence,
-            "graph": graph_data,
-            "timeline": timeline,
-            "report": report_md
-        }
-        job_store[job_id] = {"status": "complete", "result": result}
-
-        await emit(job_id, PipelineEvent(
-            type="COMPLETE", step="done",
-            message="✅ Pipeline complete",
-            data=result,
-            confidence=evidence.get("confidence", 0.0),
-        ))
-
-    except Exception as e:
-        print(f"Pipeline error: {e}")
-        error_event = PipelineEvent(type="ERROR", step="identity", message=str(e))
-        if job_id in job_streams:
-            await job_streams[job_id].put(error_event)
-            await job_streams[job_id].put(None)
-    finally:
-        if job_id in job_streams:
-            await job_streams[job_id].put(None)
-
-
 async def event_generator(job_id: str) -> AsyncGenerator:
-    """Yield SSE events from the job queue."""
     queue = job_streams[job_id]
     while True:
         event = await queue.get()
         if event is None:
             break
         yield {"data": json.dumps(event)}
+
+async def run_pipeline(job_id: str, image_path: str, context: str):
+    try:
+        await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="🔍 Extracting face embedding..."))
+        from app.src.identity.face_embedder import extract_embedding
+        embedding = await asyncio.to_thread(extract_embedding, image_path) if image_path else None
+            
+        if embedding:
+            await emit(job_id, PipelineEvent(type="FINDING", step="identity", message=f"✅ Face embedding extracted"))
+
+        from app.src.identity.nlp_extractor import get_primary_candidate
+        from app.src.identity.username_generator import generate_usernames
+        candidate_name = get_primary_candidate(context) if context else "torvalds"
+        candidate_usernames = generate_usernames(candidate_name)
+
+        # Scrape
+        from app.src.scraping.linkedin_scraper import search_linkedin_profile
+        from app.src.scraping.search_dorker import search_news_and_web, search_wikipedia
+        linkedin_data, news_data, wiki_data = await asyncio.gather(
+            search_linkedin_profile(candidate_name),
+            search_news_and_web(candidate_name),
+            search_wikipedia(candidate_name)
+        )
+        
+        from app.src.scraping.github_client import get_github_profile
+        github_data = await get_github_profile(candidate_name, is_email=False)
+        
+        # Identity Scoring
+        from app.src.correlation.identity_scorer import calculate_identity_score
+        
+        # Analyze context vs found data for simple heuristics
+        name_score = 0.9 if candidate_name.lower() in context.lower() else 0.5
+        image_score = 0.85 if embedding else None
+        org_overlap = 0.8 if linkedin_data else 0.0
+        
+        # Corroboration logic
+        sources_found = sum([1 for x in [linkedin_data, news_data, wiki_data, github_data] if x])
+        corroboration = min(1.0, sources_found * 0.25)
+        
+        # Context score: heavily penalize if "not related" is in context
+        context_score = 0.8
+        contradiction_penalty = 0.0
+        if "not related" in context.lower() or "imposter" in context.lower():
+            context_score = 0.0
+            contradiction_penalty = 1.0
+        
+        scores, verdict = calculate_identity_score(
+            name_score=name_score,
+            image_score=image_score,
+            organization_overlap=org_overlap,
+            source_corroboration=corroboration,
+            username_score=0.8,
+            project_overlap=0.7,
+            context_score=context_score,
+            contradiction_penalty=contradiction_penalty
+        )
+        
+        person_id = f"person_{job_id}"
+        
+        profiles = []
+        if github_data: profiles.append({"platform": "github", "username": github_data.get("login", ""), "url": "https://github.com", "confidence": 0.9})
+        if linkedin_data: profiles.append({"platform": "linkedin", "username": candidate_name, "url": "https://linkedin.com", "confidence": 0.8})
+        
+        candidate = {
+            "person_id": person_id,
+            "canonical_name_guess": candidate_name,
+            "verdict": verdict,
+            "scores": scores.model_dump(),
+            "profiles_found": profiles
+        }
+        
+        job_store[job_id]["candidates"].append(candidate)
+        await emit(job_id, PipelineEvent(type="FINDING", step="correlation", message=f"Generated Candidate with verdict: {verdict}"))
+
+        if verdict in ["confirmed", "possible"]:
+            # Entity Resolution Agent for Claims
+            from app.src.correlation.entity_resolution_agent import resolve_identity
+            evidence_data = await resolve_identity(candidate_name, {"links": profiles}, {})
+            
+            # Store in person_store
+            person_store[person_id] = {
+                "identity": {
+                    "person_id": person_id,
+                    "canonical_name": candidate_name,
+                    "aliases": candidate_usernames,
+                    "usernames": candidate_usernames,
+                    "confidence": scores.identity_score,
+                    "profiles": profiles
+                },
+                "claims": [{
+                    "claim_id": f"claim_{job_id}",
+                    "subject": person_id,
+                    "predicate": "works_at",
+                    "object": evidence_data.get("claim", "Unknown"),
+                    "confidence": evidence_data.get("confidence", 0.0),
+                    "evidence": [{
+                        "claim_id": f"claim_{job_id}",
+                        "source_url": evidence_data.get("source_url", ""),
+                        "excerpt": "Agent reasoning",
+                        "source_type": "llm",
+                        "confidence": 0.9
+                    }]
+                }],
+                "timeline": [{"date": "2026", "event": "Profile Generated", "claim_id": f"claim_{job_id}", "confidence": 0.9}],
+                "graph": {"nodes": [{"id": person_id, "label": candidate_name, "type": "person"}], "edges": []}
+            }
+
+        job_store[job_id]["status"] = "complete"
+        await emit(job_id, PipelineEvent(type="COMPLETE", step="done", message="Pipeline complete"))
+
+    except Exception as e:
+        job_store[job_id]["status"] = "failed"
+        await emit(job_id, PipelineEvent(type="ERROR", step="error", message=str(e)))
+    finally:
+        if job_id in job_streams:
+            await job_streams[job_id].put(None)

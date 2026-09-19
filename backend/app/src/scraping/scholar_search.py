@@ -1,33 +1,34 @@
-import httpx
-from bs4 import BeautifulSoup
 import asyncio
+import logging
+from duckduckgo_search import DDGS
 
-async def search_google_scholar(query: str) -> dict:
+logger = logging.getLogger(__name__)
+
+async def search_google_scholar(name: str) -> dict:
     """
-    Searches Google Scholar using BeautifulSoup (publicly accessible).
-    Respects rate limits by implementing basic headers.
+    Since Google Scholar aggressively blocks scrapers (and often returns empty pages),
+    we use DuckDuckGo to search Semantic Scholar which provides rich public profiles
+    containing h-index, citations, and papers.
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    url = f"https://scholar.google.com/scholar?q={query}"
+    query = f"site:semanticscholar.org author {name}"
     
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, headers=headers, timeout=10.0)
-            if response.status_code != 200:
-                return {}
+    try:
+        def do_search():
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=2))
+                return results
                 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            results = soup.find_all('div', class_='gs_ri')
-            
-            papers = []
-            for res in results[:3]:  # Top 3 papers
-                title = res.find('h3', class_='gs_rt').text if res.find('h3', class_='gs_rt') else ""
-                authors = res.find('div', class_='gs_a').text if res.find('div', class_='gs_a') else ""
-                papers.append({"title": title, "authors": authors})
-                
-            return {"profile": query, "top_papers": papers}
-            
-        except Exception:
-            return {}
+        results = await asyncio.to_thread(do_search)
+        
+        if results:
+            first_result = results[0]
+            # Semantic Scholar snippets usually look like: "Semantic Scholar profile for Linus Torvalds, with 49 highly influential citations and 12 scientific research papers."
+            return {
+                "name": name,
+                "url": first_result.get("href"),
+                "snippet": first_result.get("body")
+            }
+        return {}
+    except Exception as e:
+        logger.warning(f"Scholar search failed for {name}: {e}")
+        return {}
