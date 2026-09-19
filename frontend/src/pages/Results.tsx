@@ -43,7 +43,7 @@ export default function Results() {
   const { data, isLoading } = useQuery<IdentityResult>({
     queryKey: ["result", jobId],
     queryFn: () => axios.get(`/api/pipeline/result/${jobId}`).then((r) => r.data),
-    refetchInterval: (data) => data?.status === "complete" ? false : 2000,
+    refetchInterval: (query) => query.state.data?.status === "complete" ? false : 2000,
   });
 
   if (isLoading || !data) {
