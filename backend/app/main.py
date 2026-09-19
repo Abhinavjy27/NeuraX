@@ -27,6 +27,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
 # In-memory stores
 job_store: dict[str, dict] = {}
 job_streams: dict[str, asyncio.Queue] = {}

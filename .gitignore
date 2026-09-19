@@ -16,4 +16,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-*.egg-info/
+*.egg-info/
+
+*.jpg
+*.png
+*.jpeg
+
