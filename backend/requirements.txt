@@ -16,6 +16,7 @@ aiosqlite==0.20.0           # async SQLite driver
 
 # ─── Identity Resolution ───────────────────────────────────────────────────────
 deepface==0.0.93
+tf-keras==2.15.0
 spacy==3.7.4
 # After install: python -m spacy download en_core_web_trf
 

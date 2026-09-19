@@ -5,6 +5,7 @@ const API_BASE = 'http://localhost:8000/api';
 
 function App() {
   const [context, setContext] = useState('');
+  const [imageFile, setImageFile] = useState(null);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, failed
   const [events, setEvents] = useState([]);
@@ -28,6 +29,9 @@ function App() {
     const formData = new FormData();
     formData.append('context', context);
     formData.append('consent_confirmed', 'true');
+    if (imageFile) {
+      formData.append('image', imageFile);
+    }
 
     try {
       const res = await fetch(`${API_BASE}/analyze`, {
@@ -124,6 +128,15 @@ function App() {
                     placeholder="Enter names, roles, or known facts (e.g. 'Linus Torvalds, Creator of Linux')"
                     className="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-sm text-gray-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all resize-none h-24"
                     required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-400 mb-2">Target Image (Optional)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setImageFile(e.target.files[0])}
+                    className="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-sm text-gray-200 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
                   />
                 </div>
                 <button
