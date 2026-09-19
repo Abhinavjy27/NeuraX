@@ -8,8 +8,6 @@ const DemoOne = () => {
       heroSubtitle="Early Access Available"
       heroDescription="Discover cutting-edge solutions designed for the modern digital landscape."
       emailPlaceholder="enter@email.com"
-      videoUrl="/bg-video.mp4"
-      bgVideoUrl="/bg-video.mp4"
     />
   )
 }

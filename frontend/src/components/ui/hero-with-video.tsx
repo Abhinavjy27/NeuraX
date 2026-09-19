@@ -1,178 +1,14 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Mail, ArrowRight, Menu, ChevronDown, Volume2, VolumeX } from 'lucide-react';
+import React, { useState } from 'react';
+import { Mail, ArrowRight, Menu, ChevronDown } from 'lucide-react';
+import EarthBackground from './earth-background';
 
 interface NavbarHeroProps {
   brandName?: string;
   heroTitle?: string;
   heroSubtitle?: string;
   heroDescription?: string;
-  videoUrl?: string;
-  bgVideoUrl?: string;
   emailPlaceholder?: string;
 }
-
-// ---------------------------------------------------------------------------
-// EarthBackground — isolated video layer with cinematic parallax + scroll fx
-// ---------------------------------------------------------------------------
-const EarthBackground: React.FC<{ src: string; muted: boolean }> = ({ src, muted }) => {
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  // All animation state lives in refs — zero React re-renders on each frame
-  const mouse = useRef({ x: 0, y: 0 });
-  const current = useRef({ x: 0, y: 0 });
-  const scrollTarget = useRef(0);
-  const scrollCurrent = useRef(0);
-  const rafId = useRef<number | null>(null);
-
-  // Detect reduced motion once on mount
-  const reducedMotion =
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  // Tuning constants
-  const PARALLAX_STRENGTH = 20;  // max px shift per axis from mouse
-  const DAMPING = 0.055;          // lerp factor — lower = more inertia
-  const SCROLL_FACTOR = 0.50;    // fraction of scrollY applied to Earth Y
-
-  const animate = useCallback(() => {
-    rafId.current = requestAnimationFrame(animate);
-    if (reducedMotion) return;
-    const el = wrapperRef.current;
-    if (!el) return;
-
-    // Lerp mouse parallax
-    current.current.x += (mouse.current.x - current.current.x) * DAMPING;
-    current.current.y += (mouse.current.y - current.current.y) * DAMPING;
-
-    // Lerp scroll offset — Earth slides downward as user scrolls
-    scrollCurrent.current += (scrollTarget.current - scrollCurrent.current) * DAMPING;
-
-    el.style.transform =
-      `translate(${current.current.x}px, ${current.current.y + scrollCurrent.current}px)`;
-  }, []);
-
-  useEffect(() => {
-    const onMouse = (e: MouseEvent) => {
-      if (reducedMotion) return;
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
-      mouse.current.x = ((e.clientX - cx) / cx) * PARALLAX_STRENGTH;
-      mouse.current.y = ((e.clientY - cy) / cy) * PARALLAX_STRENGTH;
-    };
-
-    // Mouse leaves window → settle Earth back to center
-    const onMouseLeave = () => {
-      mouse.current.x = 0;
-      mouse.current.y = 0;
-    };
-
-    const onScroll = () => {
-      // Positive scroll → Earth moves DOWN (appears to stay behind as camera lifts)
-      scrollTarget.current = window.scrollY * SCROLL_FACTOR;
-    };
-
-    window.addEventListener('mousemove', onMouse, { passive: true });
-    window.addEventListener('mouseleave', onMouseLeave, { passive: true });
-    window.addEventListener('scroll', onScroll, { passive: true });
-
-    // Kick off RAF loop — runs forever until unmount
-    rafId.current = requestAnimationFrame(animate);
-
-    return () => {
-      window.removeEventListener('mousemove', onMouse);
-      window.removeEventListener('mouseleave', onMouseLeave);
-      window.removeEventListener('scroll', onScroll);
-      if (rafId.current !== null) cancelAnimationFrame(rafId.current);
-    };
-  }, [animate]);
-
-  // Sync muted prop to video DOM element without remounting
-  useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = muted;
-  }, [muted]);
-
-  return (
-    // Outer shell: fixed, fills viewport, clips the oversized mover div
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: -10,
-        overflow: 'hidden',
-        background: '#020408',
-        pointerEvents: 'none',
-      }}
-      aria-hidden="true"
-    >
-      {/* Mover: slightly larger than viewport so parallax shift never exposes edges */}
-      <div
-        ref={wrapperRef}
-        style={{
-          position: 'absolute',
-          // Expand 4% on each side to give parallax room without showing edges
-          top: '-4%',
-          left: '-4%',
-          width: '108%',
-          height: '108%',
-          willChange: 'transform',
-        }}
-      >
-        <video
-          ref={videoRef}
-          src={src}
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          disablePictureInPicture
-          style={{
-            width: '100%',
-            height: '100%',
-            // cover so Earth fills the oversized mover without letter-boxing
-            objectFit: 'cover',
-            objectPosition: 'center center',
-            display: 'block',
-          }}
-        />
-      </div>
-
-      {/* Deep space vignette — radial dark edges, stronger at corners */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background:
-            'radial-gradient(ellipse 80% 80% at 50% 50%, transparent 30%, rgba(2,4,8,0.55) 70%, rgba(2,4,8,0.92) 100%)',
-        }}
-      />
-
-      {/* Bottom fade — keeps login text highly readable */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '35%',
-          background:
-            'linear-gradient(to bottom, transparent, rgba(2,4,8,0.7) 60%, rgba(2,4,8,0.95) 100%)',
-        }}
-      />
-
-      {/* Subtle cyan atmospheric rim at horizon */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background:
-            'radial-gradient(ellipse 60% 40% at 50% 62%, rgba(6,182,212,0.06) 0%, transparent 70%)',
-        }}
-      />
-    </div>
-  );
-};
 
 // ---------------------------------------------------------------------------
 // Main NavbarHero component
@@ -181,13 +17,11 @@ const NavbarHero: React.FC<NavbarHeroProps> = ({
   brandName = 'NeuraX',
   heroTitle = 'Intelligence. Elevated.',
   heroDescription = 'Discover cutting-edge solutions designed for the modern digital landscape.',
-  bgVideoUrl = '/bg-video.mp4',
   emailPlaceholder = 'enter@email.com',
 }) => {
   const [email, setEmail] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
-  const [isVideoMuted, setIsVideoMuted] = useState(true);
 
   const handleEmailSubmit = () => {
     if (email.trim()) console.log('Email submitted:', email);
@@ -201,12 +35,11 @@ const NavbarHero: React.FC<NavbarHeroProps> = ({
      * Page shell — must NOT be overflow:hidden so browser scroll works.
      * The scrollable height is created by the spacer div at the bottom.
      * The foreground is position:fixed so it never moves during scroll.
-     * Only the EarthBackground reacts to scroll via JS transform.
      */
     <div style={{ minHeight: '100vh', background: 'transparent' }}>
 
-      {/* ── Cinematic Earth Video Background ── */}
-      <EarthBackground src={bgVideoUrl} muted={isVideoMuted} />
+      {/* ── Cinematic Earth WebGL Background ── */}
+      <EarthBackground />
 
       {/*
        * ── Fixed Foreground ──
@@ -332,17 +165,6 @@ const NavbarHero: React.FC<NavbarHeroProps> = ({
               <a href="#" className="neurax-btn-ghost">Login</a>
               <button className="neurax-btn-primary">
                 Get Started <ArrowRight style={{ width: 14, height: 14, display: 'inline' }} />
-              </button>
-              <button
-                onClick={() => setIsVideoMuted(m => !m)}
-                className="neurax-mute-btn"
-                title={isVideoMuted ? 'Unmute background' : 'Mute background'}
-                aria-label={isVideoMuted ? 'Unmute background video' : 'Mute background video'}
-              >
-                {isVideoMuted
-                  ? <VolumeX style={{ width: 16, height: 16 }} />
-                  : <Volume2 style={{ width: 16, height: 16 }} />
-                }
               </button>
             </div>
 
