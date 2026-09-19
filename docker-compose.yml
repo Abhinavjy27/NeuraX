@@ -27,6 +27,7 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./backend:/app
     depends_on:
       redis:
         condition: service_healthy
@@ -46,6 +47,9 @@ services:
       - "3001:3001"
     env_file:
       - .env
+    volumes:
+      - ./gateway:/app
+      - /app/node_modules
     depends_on:
       backend:
         condition: service_healthy

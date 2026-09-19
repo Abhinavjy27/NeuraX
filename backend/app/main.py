@@ -222,14 +222,35 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             type="PROGRESS", step="entity_resolution",
             message="🤖 Entity Resolution Agent reasoning over signals (GPT-4o)...",
         ))
-        await asyncio.sleep(0.5)
+        
+        from app.src.correlation.entity_resolution_agent import resolve_identity
+        
+        db_match_data = match if (embedding and 'match' in locals()) else {}
+        scraping_data = {"links": found_platforms} if 'found_platforms' in locals() and found_platforms else {}
+        
+        evidence = await resolve_identity(candidate_username, scraping_data, db_match_data)
+        
+        await emit(job_id, PipelineEvent(
+            type="FINDING", step="entity_resolution",
+            message=f"🧠 Agent resolved identity: {evidence.get('claim', 'Unknown')}",
+            data=evidence,
+            confidence=evidence.get("confidence", 0.0)
+        ))
 
         # ── Layer 5: Knowledge Graph ─────────────────────────────────────────
         await emit(job_id, PipelineEvent(
             type="PROGRESS", step="knowledge_graph",
             message="🕸️ Building Knowledge Graph (NetworkX)...",
         ))
-        await asyncio.sleep(0.3)
+        
+        from app.src.graph.builder import build_identity_graph
+        graph_data = build_identity_graph(candidate_username, scraping_data.get("links", {}), db_match_data)
+        
+        await emit(job_id, PipelineEvent(
+            type="FINDING", step="knowledge_graph",
+            message=f"🕸️ Graph built with {len(graph_data.get('nodes', []))} nodes and {len(graph_data.get('links', []))} edges.",
+            data=graph_data
+        ))
 
         # ── Layer 6: Evidence ────────────────────────────────────────────────
         await emit(job_id, PipelineEvent(
@@ -243,15 +264,14 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             type="PROGRESS", step="output",
             message="📊 Generating identity profile, timeline, and report...",
         ))
-        await asyncio.sleep(0.2)
-
+        
         # ── Done ─────────────────────────────────────────────────────────────
         result = {
             "status": "complete",
-            "identity": {"name": "Stub Result", "confidence": 0.91},
-            "platforms_found": platforms,
-            "graph_nodes": 12,
-            "graph_edges": 18,
+            "identity": {"name": candidate_username, "confidence": evidence.get("confidence", 0.0)},
+            "platforms_found": list(scraping_data.get("links", {}).keys()),
+            "evidence": evidence,
+            "graph": graph_data,
         }
         job_store[job_id] = {"status": "complete", "result": result}
 
@@ -259,7 +279,7 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             type="COMPLETE", step="done",
             message="✅ Pipeline complete",
             data=result,
-            confidence=0.91,
+            confidence=evidence.get("confidence", 0.0),
         ))
 
     except Exception as e:
