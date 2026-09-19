@@ -52,7 +52,7 @@ Manually correlating this information is:
 | Tier | Platforms | Access Method |
 |---|---|---|
 | **Core (live demo)** | GitHub, YouTube, public web/search results, personal sites | GitHub REST API, YouTube Data API (free tier), Google Programmable Search / DuckDuckGo (free tier) |
-| **Extended (architecture-ready, best-effort)** | LinkedIn, X/Twitter, Instagram, conference & patent registries | Public search-snippet lookups only — no login, no scraping behind auth walls, no paid API tiers |
+| **Extended (architecture-ready, best-effort)** | LinkedIn, X/Twitter, Instagram, conference & patent registries | Public search-snippet lookups via Playwright (headless browser) only — no login, no scraping behind auth walls, no paid API tiers |
 
 We scope this explicitly because reliable, ToS-compliant access to LinkedIn/X/Instagram without paid APIs is limited — the architecture supports adding them, but the live system is built and demoed on the Core tier first.
 
@@ -188,8 +188,8 @@ Output is shown to the user as **signal strength (name/username/org/project/imag
 ### Phase 2 — Multi-Platform Discovery
 - **GitHub API**: profile, repositories, contributions, organizations
 - **YouTube Data API**: channel, videos, descriptions
-- **Web/Search**: Google Programmable Search (free tier) / DuckDuckGo results, public page fetching
-- **Extended (best-effort)**: LinkedIn/X/Instagram/patent-registry public search snippets where accessible without login or paid tiers
+- **Web/Search**: Google Programmable Search (free tier) / DuckDuckGo results, then Playwright headless-browses each result page to pull the actual public content (JS-rendered pages don't return usable HTML on a plain request)
+- **Extended (best-effort)**: LinkedIn/X/Instagram/patent-registry public search snippets, fetched via Playwright where accessible without login or paid tiers
 - **LLM budget note**: ~$5 GPT-4o-mini credit is earmarked for entity extraction and disambiguation calls; batch calls per candidate rather than per-snippet to conserve it, and fall back to a free-tier LLM if it runs out mid-hackathon
 
 ### Phase 3 — Correlation & Fusion
@@ -202,6 +202,33 @@ Output is shown to the user as **signal strength (name/username/org/project/imag
 - Every claim → `{ claim, evidence[], confidence }` per the data model above
 - Conflicting signals → flagged with an explicit `conflict_reason`, never silently resolved
 - Final output: JSON report + rendered HTML timeline + relationship graph visualization
+
+---
+
+## 🛠️ Tech Stack
+
+| Technology | Category | Role in NeuraX |
+|---|---|---|
+| **Python 3.11+** | Core language | Powers all backend logic — discovery, correlation, evidence, scoring |
+| **FastAPI** | Backend framework | Serves the six `/api/*` routes; async support lets it call GitHub/YouTube/search APIs concurrently instead of sequentially |
+| **Uvicorn** | ASGI server | Runs the FastAPI app locally and for the demo |
+| **`face_recognition` (dlib)** or **InsightFace** | Face embedding | Turns the consented input photo into a numeric embedding used later for candidate-photo similarity — one signal among several, not a search mechanism |
+| **spaCy** / **Hugging Face Transformers** | NLP / NER | Extracts names, aliases, organizations, and locations from the free-text context and from scraped bios/posts |
+| **`rapidfuzz`** | Fuzzy string matching | Matches name/username variants across platforms during entity resolution (e.g. `"J. Doe"` ↔ `"johndoe123"`) |
+| **`networkx`** | Graph modeling | Builds the in-memory person ↔ organization ↔ project ↔ event graph before it's serialized for the frontend |
+| **GPT-4o-mini (OpenAI API)** | LLM — primary | Extracts structured `Claim` objects from unstructured bios/posts; helps disambiguate conflicting candidates; budgeted against the ~$5 credit |
+| **Groq / Google Gemini (free tier)** | LLM — fallback | Backup extraction/reasoning if the GPT-4o-mini credit runs out mid-hackathon |
+| **GitHub REST API** | Discovery source | Pulls profile, repos, organizations, and contribution data — free, generous rate limits, core platform |
+| **YouTube Data API v3** | Discovery source | Pulls channel and video metadata — free quota, core platform |
+| **Google Programmable Search API / DuckDuckGo HTML** | Discovery source | General web search seeded by name + context, free tier, core platform |
+| **Playwright (Python)** | Web scraping — browser automation | Headless-browser fetching of public pages that render via JavaScript (search result pages, public profile pages, personal sites) — where a plain HTTP request would return an empty shell |
+| **`BeautifulSoup`** | HTML parsing | Parses the HTML Playwright returns to extract text, links, and metadata for the discovery/extraction pipeline |
+| **React (Vite)** | Frontend | Dashboard UI — component-based views for candidates, identity, evidence, timeline, and graph, all driven by the `/api/*` contract |
+| **`vis-network` / D3.js** (via a React wrapper, or a thin custom component) | Graph & timeline visualization | Renders the relationship graph (nodes/edges) and the chronological timeline inside React components |
+| **`axios`** or the native `fetch` API | API client | Talks to the six `/api/*` endpoints from both frontend views |
+| **JSON files** (`data/fixtures/`, `data/output/`) | Data storage | No database needed at hackathon scale — fixture files double as the exact frontend/backend contract from hour 0 |
+| **`python-dotenv`** | Configuration | Keeps GitHub/YouTube/OpenAI API keys out of source, loaded from a local `.env` |
+| **Git / GitHub** | Version control | Team collaboration and checkpoint submissions |
 
 ---
 
@@ -222,9 +249,13 @@ NeuraX/
 │   ├── correlation/             # Multi-signal scoring & entity resolution   (Backend 2)
 │   ├── evidence/                 # Claim + evidence generation, LLM layer    (Backend 2)
 │   └── output/                   # Timeline/graph data builders             (Backend 2)
-├── dashboard/
-│   ├── core/                     # App shell, API client, candidate/evidence views (Frontend 1)
-│   └── visualize/                # Timeline + relationship graph, report/export     (Frontend 2)
+├── dashboard/                     # Vite + React app
+│   ├── src/
+│   │   ├── core/                  # App shell, API client, candidate/evidence views (Frontend 1)
+│   │   ├── visualize/              # Timeline + relationship graph, report/export     (Frontend 2)
+│   │   └── App.jsx
+│   ├── package.json
+│   └── vite.config.js
 ├── data/
 │   ├── input/
 │   ├── fixtures/                 # Mock JSON matching the API contract, for frontend to build against from hour 0
@@ -249,11 +280,161 @@ NeuraX/
 | `GET /api/timeline/{person_id}` | Chronological event list |
 | `GET /api/graph/{person_id}` | Graph `{ nodes[], edges[] }` |
 
+### API Specification — Inputs & Outputs
+
+All responses are `application/json` unless noted. Errors always return:
+```json
+{ "error": "human-readable message", "code": "NOT_FOUND | BAD_INPUT | PROCESSING" }
+```
+
+---
+
+#### `POST /api/analyze`
+Kicks off the pipeline for one consented image + context.
+
+**Input** — `multipart/form-data`:
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `image` | file (jpg/png) | ✅ | the consented photo |
+| `context` | string | ✅ | free text: name, org, location, anything organizers give |
+
+Call it like:
+```bash
+curl -X POST http://localhost:8000/api/analyze \
+  -F "image=@sample.jpg" \
+  -F "context=Software engineer, Bangalore, name John Doe"
+```
+
+**Output** — `200 OK`:
+```json
+{ "job_id": "abc123", "status": "processing" }
+```
+
+---
+
+#### `GET /api/candidates/{job_id}`
+Poll this until `status` is `"complete"`.
+
+**Input:** path param `job_id` (string, from `/analyze`)
+
+**Output:**
+```json
+{
+  "job_id": "abc123",
+  "status": "processing | complete",
+  "candidates": [
+    {
+      "candidate_id": "cand_001",
+      "canonical_name_guess": "John Doe",
+      "scores": {
+        "name_score": 0.8,
+        "username_score": 0.6,
+        "image_score": 0.75,
+        "organization_overlap": 0.5,
+        "project_overlap": 0.3,
+        "context_score": 0.6,
+        "source_corroboration_bonus": 0.2,
+        "contradiction_penalty": 0.0,
+        "identity_score": 0.72
+      },
+      "profiles_found": [
+        { "platform": "github", "username": "johndoe", "url": "https://github.com/johndoe" }
+      ]
+    }
+  ]
+}
+```
+Frontend picks the top-scoring (or user-selected) `candidate_id` and passes it forward as `person_id` to the endpoints below.
+
+---
+
+#### `GET /api/identity/{person_id}`
+**Input:** path param `person_id` (string, from a chosen candidate)
+
+**Output:**
+```json
+{
+  "person_id": "person_001",
+  "canonical_name": "John Doe",
+  "aliases": ["J. Doe", "Johnny Doe"],
+  "usernames": ["johndoe", "jdoe123"],
+  "confidence": 0.91,
+  "profiles": [
+    { "platform": "github", "username": "johndoe", "url": "...", "confidence": 0.94 }
+  ]
+}
+```
+
+---
+
+#### `GET /api/claims/{person_id}`
+**Input:** path param `person_id`
+
+**Output:** array of `Claim`, each with nested `Evidence[]`:
+```json
+[
+  {
+    "id": "claim_123",
+    "subject": "person_001",
+    "predicate": "works_at",
+    "object": "XYZ Technologies",
+    "confidence": 0.91,
+    "conflict_reason": null,
+    "evidence": [
+      {
+        "source_url": "https://github.com/johndoe",
+        "excerpt": "Software Engineer at XYZ Technologies",
+        "source_type": "github",
+        "confidence": 0.92
+      }
+    ]
+  }
+]
+```
+A claim with `conflict_reason` set (e.g. `"location mismatch across sources"`) should be rendered flagged, not hidden.
+
+---
+
+#### `GET /api/timeline/{person_id}`
+**Input:** path param `person_id`
+
+**Output:** chronologically sorted events, each traceable back to a claim:
+```json
+[
+  {
+    "date": "2023-05",
+    "event": "Joined XYZ Technologies as Software Engineer",
+    "claim_id": "claim_123",
+    "confidence": 0.91
+  }
+]
+```
+
+---
+
+#### `GET /api/graph/{person_id}`
+**Input:** path param `person_id`
+
+**Output:** node/edge graph for rendering:
+```json
+{
+  "nodes": [
+    { "id": "person_001", "label": "John Doe", "type": "person" },
+    { "id": "org_xyz", "label": "XYZ Technologies", "type": "organization" }
+  ],
+  "edges": [
+    { "source": "person_001", "target": "org_xyz", "relation": "works_at", "claim_id": "claim_123" }
+  ]
+}
+```
+
+---
+
 ### Backend — Person 1: Discovery & Candidate Signals
 **Owns:** `src/identity/`, `src/discovery/`
 - Username/candidate generator (name → handle variants)
 - GitHub API client, YouTube Data API client
-- Web/search discovery + public page fetcher (Google Programmable Search / DuckDuckGo)
+- Web/search discovery + public page fetcher — Google Programmable Search / DuckDuckGo for URLs, Playwright to actually render and pull page content
 - Face embedding extraction + similarity function
 - NLP context parsing (spaCy NER) for names/orgs/locations
 - **Ships:** `CandidateProfile[]` matching the contract, served at `/api/candidates/{job_id}`
@@ -268,16 +449,16 @@ NeuraX/
 - **Ships:** `/api/identity`, `/api/claims`, `/api/timeline`, `/api/graph`
 
 ### Frontend — Person 1: Core Dashboard & API Integration
-**Owns:** `dashboard/core/`
-- API client / data-fetching layer, built against `data/fixtures/` from hour 0
-- Identity overview view — canonical name, confidence badge, alias list
-- Evidence view — click a claim, see source list/excerpts/confidence ("why do we believe this")
-- App state management and routing
+**Owns:** `dashboard/src/core/`
+- API client (`axios`/`fetch`) / data-fetching hooks, built against `data/fixtures/` from hour 0
+- Identity overview component — canonical name, confidence badge, alias list
+- Evidence view component — click a claim, see source list/excerpts/confidence ("why do we believe this")
+- App state management (React Context or a lightweight store) and routing
 
 ### Frontend — Person 2: Timeline, Graph & Demo
-**Owns:** `dashboard/visualize/`
-- Timeline visualization of extracted events/roles
-- Relationship graph visualization (`networkx` data → vis.js/D3), interactive on org/project/event nodes
+**Owns:** `dashboard/src/visualize/`
+- Timeline visualization component for extracted events/roles
+- Relationship graph visualization (`networkx` data → `vis-network`/D3 component), interactive on org/project/event nodes
 - Report/export view (human-readable + JSON download)
 - Demo script and pitch narrative for judges
 
@@ -309,12 +490,16 @@ NeuraX/
 git clone https://github.com/Abhinavjy27/NeuraX.git
 cd NeuraX
 
+# Backend
 python3 -m venv .venv
 source .venv/bin/activate
-
 pip install -r requirements.txt
-
 python main.py --image data/input/sample.jpg --context "Software engineer, Bangalore"
+
+# Frontend (separate terminal)
+cd dashboard
+npm install
+npm run dev
 ```
 
 ---
