@@ -329,8 +329,12 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         person_id = f"person_{job_id}"
         
         profiles = []
-        if github_data: profiles.append({"platform": "github", "username": github_data.get("login", ""), "url": "https://github.com", "confidence": 0.9})
-        if linkedin_data: profiles.append({"platform": "linkedin", "username": candidate_name, "url": "https://linkedin.com", "confidence": 0.8})
+        if github_data:
+            gh_username = github_data.get("username") or github_data.get("login", "")
+            if gh_username:
+                profiles.append({"platform": "github", "username": gh_username, "url": f"https://github.com/{gh_username}", "confidence": 0.9})
+        if linkedin_data and linkedin_data.get("url"):
+            profiles.append({"platform": "linkedin", "username": candidate_name, "url": linkedin_data["url"], "confidence": 0.8})
         
         if social_data:
             for platform, url in social_data.items():
