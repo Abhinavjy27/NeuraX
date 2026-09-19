@@ -28,6 +28,9 @@ function getPlatformConfig(platform = '') {
 function ProfileTile({ profile }) {
   const cfg = getPlatformConfig(profile.platform);
   const Icon = cfg.icon;
+  const faceVerified = profile.face_verified === true;
+  const faceUnknown = profile.face_verified === null || profile.face_verified === undefined;
+  const textAttr = profile.text_attribution; // "CONFIRMED" | "POSSIBLE" | undefined
   return (
     <a
       href={profile.url}
@@ -38,15 +41,41 @@ function ProfileTile({ profile }) {
     >
       <div className="flex items-center justify-between">
         <Icon className="w-6 h-6" style={{ color: cfg.color }} />
-        <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors" />
+        <div className="flex items-center gap-1">
+          {faceVerified && (
+            <span title="Face-verified match" className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full px-1.5 py-0.5">
+              ✓ FACE
+            </span>
+          )}
+          {!faceVerified && !faceUnknown && (
+            <span title="Face mismatch — shown for reference only" className="text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 rounded-full px-1.5 py-0.5">
+              ✗
+            </span>
+          )}
+          {faceUnknown && textAttr === 'CONFIRMED' && (
+            <span title="Context-verified via bio matching" className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full px-1.5 py-0.5">
+              ✓ TEXT
+            </span>
+          )}
+          {faceUnknown && textAttr === 'POSSIBLE' && (
+            <span title="Possibly this person — bio is thin" className="text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full px-1.5 py-0.5">
+              ~ POSSIBLE
+            </span>
+          )}
+          <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors" />
+        </div>
       </div>
       <div>
         <div className="text-xs font-semibold" style={{ color: cfg.color }}>{cfg.label}</div>
         <div className="text-xs text-slate-400 truncate mt-0.5">@{profile.username || profile.url?.split('/').filter(Boolean).pop()}</div>
       </div>
-      {profile.confidence && (
-        <div className="text-[10px] font-mono text-slate-600">{(profile.confidence * 100).toFixed(0)}% confidence</div>
-      )}
+      <div className="text-[10px] font-mono text-slate-600">
+        {faceVerified && profile.face_confidence
+          ? `Face match: ${(profile.face_confidence * 100).toFixed(0)}%`
+          : profile.confidence
+            ? `${(profile.confidence * 100).toFixed(0)}% confidence`
+            : ''}
+      </div>
     </a>
   );
 }

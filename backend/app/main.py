@@ -301,7 +301,9 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         
         # Analyze context vs found data for simple heuristics
         name_score = 0.9 if candidate_name.lower() in context.lower() else 0.5
-        image_score = 0.85 if embedding else None
+        # Real face similarity score (or None if no image)
+        face_match_scores = [p.get("face_confidence") for p in profiles if p.get("face_verified") is True]
+        image_score = (sum(face_match_scores) / len(face_match_scores)) if face_match_scores else (0.75 if embedding else None)
         org_overlap = 0.8 if linkedin_data else 0.0
         
         # Corroboration logic
@@ -339,7 +341,36 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         if social_data:
             for platform, url in social_data.items():
                 profiles.append({"platform": platform.lower(), "username": base_username, "url": url, "confidence": 0.95})
-        
+
+        # ── Face Cross-Verification ──────────────────────────────────────────
+        # If the user uploaded a probe image, download each profile's photo and
+        # run DeepFace.verify() to confirm the profile belongs to this person.
+        if image_path and profiles:
+            await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="🔎 Cross-verifying profile photos against probe image…"))
+            from app.src.identity.face_cross_verifier import cross_verify_profiles
+            profiles = await cross_verify_profiles(image_path, profiles, {
+                "linkedin": linkedin_data,
+                "github": github_data,
+                "wikipedia": wiki_data,
+            })
+            verified_count = sum(1 for p in profiles if p.get("face_verified") is True)
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="identity",
+                message=f"✅ Face verification complete — {verified_count}/{len(profiles)} profiles confirmed"
+            ))
+        elif profiles:
+            # No image — use text-based attribution: fetch each profile's bio and
+            # ask GPT-4o if it matches the target context seed.
+            await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="📝 Attributing profiles via context matching (no image provided)…"))
+            from app.src.identity.profile_attributor import text_attribute_profiles
+            profiles = await text_attribute_profiles(context, candidate_name, profiles)
+            confirmed = sum(1 for p in profiles if p.get("text_attribution") == "CONFIRMED")
+            possible  = sum(1 for p in profiles if p.get("text_attribution") == "POSSIBLE")
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="identity",
+                message=f"✅ Text attribution complete — {confirmed} confirmed, {possible} possible, {len(profiles)} total"
+            ))
+
         candidate = {
             "person_id": person_id,
             "canonical_name_guess": candidate_name,
@@ -347,7 +378,7 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             "scores": scores.model_dump(),
             "profiles_found": profiles
         }
-        
+
         job_data = await job_get(job_id) or {"status": "processing", "candidates": []}
         job_data["candidates"].append(candidate)
         await job_set(job_id, job_data)
