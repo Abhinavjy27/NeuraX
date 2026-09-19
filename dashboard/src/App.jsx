@@ -18,6 +18,7 @@ const PLATFORM_CONFIG = {
   tiktok:      { color: '#69c9d0', bg: '#0a2325', icon: Globe,     label: 'TikTok'       },
   reddit:      { color: '#ff4500', bg: '#2d1a0e', icon: Globe,     label: 'Reddit'       },
   medium:      { color: '#12100e', bg: '#1a1a1a', icon: Globe,     label: 'Medium'       },
+  wikipedia:   { color: '#ffffff', bg: '#333333', icon: Globe,     label: 'Wikipedia'    },
 };
 
 function getPlatformConfig(platform = '') {
@@ -139,17 +140,21 @@ function KnowledgeGraph({ personId, visible }) {
         <span>Identity Topology</span>
         <span className="font-normal normal-case text-slate-500">Scroll to zoom · Drag to pan</span>
       </div>
-      <div ref={containerRef} style={{ height: 480, background: '#0b1120' }}>
+      <div className="relative" style={{ height: 480, background: '#0b1120' }}>
+        {/* Dedicated container for vis-network - React MUST NOT render children here */}
+        <div ref={containerRef} className="absolute inset-0" />
+        
+        {/* Overlays managed by React */}
         {status === 'loading' && (
-          <div className="flex items-center justify-center h-full text-slate-400 gap-2">
+          <div className="absolute inset-0 flex items-center justify-center text-slate-400 gap-2 bg-[#0b1120] z-10">
             <Loader2 className="w-5 h-5 animate-spin text-indigo-500" /> Loading graph…
           </div>
         )}
         {status === 'empty' && (
-          <div className="flex items-center justify-center h-full text-slate-500">No topology data yet.</div>
+          <div className="absolute inset-0 flex items-center justify-center text-slate-500 bg-[#0b1120] z-10">No topology data yet.</div>
         )}
         {status === 'error' && (
-          <div className="flex items-center justify-center h-full text-red-400">Failed to load graph.</div>
+          <div className="absolute inset-0 flex items-center justify-center text-red-400 bg-[#0b1120] z-10">Failed to load graph.</div>
         )}
       </div>
       <div className="px-4 py-2.5 border-t border-slate-800 bg-slate-800/40 flex flex-wrap gap-4 text-xs text-slate-400">

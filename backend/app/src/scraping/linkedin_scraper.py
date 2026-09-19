@@ -1,29 +1,23 @@
 import asyncio
-from duckduckgo_search import DDGS
+from app.src.scraping.search_dorker import _ddg_html_search
 
 async def search_linkedin_profile(name: str) -> dict:
     """
-    Since LinkedIn aggressively blocks scraping, we use OSINT (Search Engine Dorking)
-    via DuckDuckGo to safely find the profile without triggering LinkedIn's rate limits.
+    Search for a LinkedIn profile using OSINT scraping.
     """
-    query = f"site:linkedin.com/in/ {name}"
+    query = f'site:linkedin.com "{name}"'
     
     try:
-        # Run synchronous duckduckgo in thread
-        def do_search():
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=1))
-                return results
-                
-        results = await asyncio.to_thread(do_search)
+        results = await _ddg_html_search(query, max_results=5)
         
-        if results:
-            first_result = results[0]
-            return {
-                "name": name,
-                "url": first_result.get("href"),
-                "snippet": first_result.get("body")
-            }
+        for result in results:
+            if "linkedin.com/in/" in result['url'].lower():
+                return {
+                    "name": name,
+                    "url": result['url'],
+                    "snippet": result['snippet'],
+                    "pre_verified": True
+                }
         return {}
     except Exception as e:
         return {}

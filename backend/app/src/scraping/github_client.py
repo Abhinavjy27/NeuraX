@@ -15,14 +15,24 @@ HEADERS = {
 if GITHUB_TOKEN:
     HEADERS["Authorization"] = f"token {GITHUB_TOKEN}"
 
+SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")
+
+def _get_url(target_url: str) -> str:
+    """Wraps the target URL in ScraperAPI if no GitHub token is present to bypass the 60 req/hr limit."""
+    import urllib.parse
+    if not GITHUB_TOKEN:
+        return f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={urllib.parse.quote(target_url)}"
+    return target_url
+
 async def get_github_profile(query: str, is_email: bool = False) -> Optional[Dict[str, Any]]:
     """
     Search GitHub for a user by email or name, then fetch their profile.
     """
     search_q = f"{query} in:email" if is_email else f'"{query}" in:name'
-    search_url = f"https://api.github.com/search/users?q={search_q}&per_page=1"
+    target_search_url = f"https://api.github.com/search/users?q={search_q}&per_page=1"
+    search_url = _get_url(target_search_url)
     
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=45.0) as client:
         try:
             # 0. Search for the user
             search_resp = await client.get(search_url, headers=HEADERS)
@@ -33,10 +43,10 @@ async def get_github_profile(query: str, is_email: bool = False) -> Optional[Dic
                 return None
                 
             username = search_data["items"][0]["login"]
-            base_url = f"https://api.github.com/users/{username}"
+            target_base_url = f"https://api.github.com/users/{username}"
             
             # 1. Get Base Profile
-            profile_resp = await client.get(base_url, headers=HEADERS)
+            profile_resp = await client.get(_get_url(target_base_url), headers=HEADERS)
             if profile_resp.status_code == 404:
                 return None
             profile_resp.raise_for_status()
@@ -60,17 +70,16 @@ async def get_github_profile(query: str, is_email: bool = False) -> Optional[Dic
             }
             
             # 2. Get Organizations
-            orgs_resp = await client.get(f"{base_url}/orgs", headers=HEADERS)
+            orgs_resp = await client.get(_get_url(f"{target_base_url}/orgs"), headers=HEADERS)
             if orgs_resp.status_code == 200:
                 orgs_data = orgs_resp.json()
                 profile["organizations"] = [org.get("login") for org in orgs_data]
                 
             # 3. Get Top Repositories (sorted by stars)
-            repos_resp = await client.get(
-                f"{base_url}/repos", 
-                params={"sort": "pushed", "per_page": 10},
-                headers=HEADERS
-            )
+            # ScraperAPI doesn't directly support query parameters in the target url as separate httpx params if not part of the encoded url,
+            # so we encode them directly into the target URL!
+            repos_target = f"{target_base_url}/repos?sort=pushed&per_page=10"
+            repos_resp = await client.get(_get_url(repos_target), headers=HEADERS)
             if repos_resp.status_code == 200:
                 repos_data = repos_resp.json()
                 # Sort by stargazers_count descending and take top 5

@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     curl wget git build-essential cmake clang libclang-dev \
     libgl1 libglib2.0-0 libnss3 libatk-bridge2.0-0 libxcomposite1 \
     libxdamage1 libxrandr2 libgbm1 libxkbcommon0 libasound2 \
+    libcups2 libxfixes3 libpango-1.0-0 libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

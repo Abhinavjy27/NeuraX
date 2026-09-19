@@ -83,3 +83,70 @@ def search_face(embedding: List[float], n_results: int = 3) -> List[Dict[str, An
     except Exception as e:
         logger.error(f"Failed to search face: {e}")
         return []
+
+from openai import AsyncOpenAI
+_openai_client = None
+
+def _get_openai():
+    global _openai_client
+    if not _openai_client:
+        _openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _openai_client
+
+async def upsert_text_chunks(person_id: str, chunks: List[str]):
+    """Embed text chunks and upsert to ChromaDB."""
+    if bios_collection is None or not chunks:
+        return False
+        
+    client = _get_openai()
+    try:
+        # Get embeddings in bulk
+        resp = await client.embeddings.create(
+            input=chunks,
+            model="text-embedding-3-small"
+        )
+        embeddings = [d.embedding for d in resp.data]
+        ids = [f"{person_id}_chunk_{i}" for i in range(len(chunks))]
+        metadatas = [{"person_id": person_id, "text": chunk} for chunk in chunks]
+        
+        bios_collection.upsert(
+            ids=ids,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to upsert text chunks for {person_id}: {e}")
+        return False
+
+async def search_text_chunks(query: str, person_id: str, n_results: int = 5) -> List[Dict]:
+    """Embed the query and retrieve Top K matching text chunks for a specific person."""
+    if bios_collection is None:
+        return []
+        
+    client = _get_openai()
+    try:
+        resp = await client.embeddings.create(
+            input=[query],
+            model="text-embedding-3-small"
+        )
+        query_embedding = resp.data[0].embedding
+        
+        results = bios_collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+            where={"person_id": person_id}
+        )
+        
+        formatted = []
+        if results['ids'] and results['ids'][0]:
+            for i in range(len(results['ids'][0])):
+                formatted.append({
+                    "id": results['ids'][0][i],
+                    "distance": results['distances'][0][i] if 'distances' in results and results['distances'] else 0.0,
+                    "metadata": results['metadatas'][0][i] if 'metadatas' in results and results['metadatas'] else {}
+                })
+        return formatted
+    except Exception as e:
+        logger.error(f"Failed to search text chunks: {e}")
+        return []

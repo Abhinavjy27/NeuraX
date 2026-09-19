@@ -60,6 +60,11 @@ def get_primary_candidate(text: str) -> str:
     """
     Extracts the most likely primary candidate username/name from the context.
     """
+    text_clean = text.strip()
+    # Fast path for simple search bar queries (1-3 words, no punctuation)
+    if len(text_clean.split()) <= 3 and not any(c in text_clean for c in '.,;:\n'):
+        return text_clean.title()
+        
     entities = extract_entities(text)
     if entities["persons"]:
         return entities["persons"][0]

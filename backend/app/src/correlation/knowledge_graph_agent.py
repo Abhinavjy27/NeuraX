@@ -78,7 +78,12 @@ async def synthesize_knowledge_graph(candidate_name: str, scraping_results: Dict
             temperature=0.2
         )
         
-        result = json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        if not content:
+            logger.error("LLM returned None content for graph synthesis.")
+            return mock_synthesize_graph(candidate_name)
+            
+        result = json.loads(content)
         
         # Ensure the main person node exists
         if "graph" in result and "nodes" in result["graph"]:

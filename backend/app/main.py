@@ -174,70 +174,43 @@ async def chat_with_graph(person_id: str, request: ChatRequest):
     import os
     client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     
-    # Construct a rich RAG context from the full identity record
-    identity = person.get("identity", {})
-    graph = person.get("graph", {})
-    claims = person.get("claims", [])
-    timeline = person.get("timeline", [])
+    # === LAYER 1: KEYWORD EXTRACTION ===
+    kwd_prompt = f"Extract 1 to 4 core OSINT keywords from this question to search a vector database for information about {person.get('identity', {}).get('canonical_name', 'the subject')}. Respond ONLY with the keywords space-separated, nothing else."
+    try:
+        kwd_resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": f"{kwd_prompt}\nQuestion: {request.message}"}],
+            temperature=0.1,
+            max_tokens=20
+        )
+        search_query = kwd_resp.choices[0].message.content.strip()
+    except Exception as e:
+        search_query = request.message
 
-    # Build a plain-text summary of graph nodes for the LLM
-    node_lines = []
-    for node in graph.get("nodes", []):
-        node_lines.append(f"  - [{node.get('type','?').upper()}] {node.get('label','?')}")
-    node_summary = "\n".join(node_lines) if node_lines else "  (none)"
+    # === LAYER 2: VECTOR RETRIEVAL ===
+    from app.src.vectordb.store import search_text_chunks
+    retrieved_chunks = await search_text_chunks(search_query, person_id, n_results=4)
+    
+    rag_context = ""
+    if retrieved_chunks:
+        rag_context = "\n\n---\n\n".join([c.get("metadata", {}).get("text", "") for c in retrieved_chunks])
+    else:
+        rag_context = "No specific intelligence footprint matched the query."
+        
+    subject_name = person.get("identity", {}).get("canonical_name", "the subject")
 
-    edge_lines = []
-    for edge in graph.get("edges", []):
-        edge_lines.append(f"  - {edge.get('source','?')} --[{edge.get('relation','?')}]--> {edge.get('target','?')}")
-    edge_summary = "\n".join(edge_lines) if edge_lines else "  (none)"
+    # === LAYER 3: SYNTHESIZED GENERATION ===
+    system_prompt = f"""You are a highly analytical OSINT Intelligence Agent for NeuraX.
+Your task is to answer the user's question about {subject_name} using ONLY the extracted intelligence chunks provided below.
 
-    profile_lines = []
-    for p in identity.get("profiles", []):
-        profile_lines.append(f"  - {p.get('platform','?').upper()}: {p.get('url','?')}")
-    profile_summary = "\n".join(profile_lines) if profile_lines else "  (none)"
+=== RETRIEVED INTELLIGENCE CONTEXT ===
+{rag_context}
+======================================
 
-    claim_lines = []
-    for c in claims:
-        claim_lines.append(f"  - {c.get('predicate','?')}: {c.get('object','?')} (confidence={c.get('confidence',0):.0%}, source={c.get('source_url') or 'unknown'})")
-    claim_summary = "\n".join(claim_lines) if claim_lines else "  (none)"
-
-    timeline_lines = []
-    for t in timeline:
-        timeline_lines.append(f"  - [{t.get('date','?')}] {t.get('event','?')} (confidence={t.get('confidence',0):.0%})")
-    timeline_summary = "\n".join(timeline_lines) if timeline_lines else "  (none)"
-
-    subject_name = identity.get("canonical_name", "the subject")
-    confidence = identity.get("confidence", 0)
-
-    system_prompt = f"""You are a OSINT Intelligence Analyst for NeuraX. Your task is to answer questions about the target identity using ONLY the extracted intelligence below.
-
-=== TARGET IDENTITY ===
-Name: {subject_name}
-Confidence Score: {confidence:.1%}
-Aliases / Usernames: {', '.join(identity.get('aliases', []))}
-
-=== SOCIAL & PLATFORM PROFILES ===
-{profile_summary}
-
-=== VERIFIED CLAIMS ===
-{claim_summary}
-
-=== OSINT TIMELINE ===
-{timeline_summary}
-
-=== KNOWLEDGE GRAPH ENTITIES ===
-Nodes:
-{node_summary}
-
-Edges:
-{edge_summary}
-
-=== RULES ===
-1. Answer ONLY using the intelligence above about {subject_name}. Do not use external knowledge.
-2. Questions asking about this person's Wikipedia page, social profiles, organizations, awards, or locations are valid — answer from the data above.
-3. If the user asks something genuinely unrelated to {subject_name} (e.g., coding help, math, world events), reply: "I can only answer questions related to the extracted intelligence graph."
-4. If the evidence above does not contain the answer, reply: "I don't have enough evidence in the current graph to answer that."
-5. Be analytical and concise. Do not be conversational or add disclaimers."""
+RULES:
+1. Answer ONLY using the intelligence context above. Do not hallucinate or use external knowledge.
+2. If the context does not contain the answer, explicitly state: "I do not have enough evidence in the current intelligence graph to answer that."
+3. Be concise, direct, and analytical. Do not be conversational."""
 
     try:
         response = await client.chat.completions.create(
@@ -281,21 +254,40 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
 
         from app.src.scraping.linkedin_scraper import search_linkedin_profile
         from app.src.scraping.search_dorker import search_news_and_web, search_wikipedia
+        from app.src.scraping.github_client import get_github_profile
+        from app.src.scraping.wikidata_client import get_wikidata_socials
         from app.src.scraping.username_checker import check_all_platforms
-        
+
         # Determine base username
         base_username = candidate_usernames[0] if candidate_usernames else candidate_name.lower().replace(" ", "")
+
+        await emit(job_id, PipelineEvent(type="PROGRESS", step="scraping", message="🌐 Querying Wikipedia, GitHub, OSINT footprints and Wikidata..."))
         
-        linkedin_data, news_data, wiki_data, social_data = await asyncio.gather(
-            search_linkedin_profile(candidate_name),
-            search_news_and_web(candidate_name),
-            search_wikipedia(candidate_name),
-            check_all_platforms(base_username)
+        # Concurrently gather data
+        wiki_task = asyncio.create_task(search_wikipedia(candidate_name))
+        github_task = asyncio.create_task(get_github_profile(candidate_name, is_email=False))
+        linkedin_task = asyncio.create_task(search_linkedin_profile(candidate_name))
+        news_task = asyncio.create_task(search_news_and_web(candidate_name))
+        wikidata_task = asyncio.create_task(get_wikidata_socials(candidate_name))
+        social_task = asyncio.create_task(check_all_platforms(base_username))
+        
+        wiki_data, github_data, linkedin_data, news_data, wikidata_socials, social_data = await asyncio.gather(
+            wiki_task, github_task, linkedin_task, news_task, wikidata_task, social_task, return_exceptions=True
         )
-        
-        from app.src.scraping.github_client import get_github_profile
-        github_data = await get_github_profile(candidate_name, is_email=False)
-        
+
+        if isinstance(wiki_data, Exception): wiki_data = None
+        if isinstance(github_data, Exception): github_data = None
+        if isinstance(linkedin_data, Exception): linkedin_data = None
+        if isinstance(news_data, Exception): news_data = None
+        if isinstance(wikidata_socials, Exception): wikidata_socials = {}
+        if isinstance(social_data, Exception): social_data = {}
+
+        if not isinstance(social_data, dict):
+            social_data = {}
+        if isinstance(wikidata_socials, dict):
+            social_data.update(wikidata_socials)
+            
+        # (Hardcoded fallbacks removed - delegating all scraping to Playwright OSINT)
         # Identity Scoring
         from app.src.correlation.identity_scorer import calculate_identity_score
         
@@ -309,10 +301,40 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 profiles.append({"platform": "github", "username": gh_username, "url": f"https://github.com/{gh_username}", "confidence": 0.9})
         if linkedin_data and linkedin_data.get("url"):
             profiles.append({"platform": "linkedin", "username": candidate_name, "url": linkedin_data["url"], "confidence": 0.8})
+        if wiki_data and wiki_data.get("url"):
+            profiles.append({"platform": "wikipedia", "username": candidate_name, "url": wiki_data["url"], "confidence": 0.95})
         
         if social_data:
             for platform, url in social_data.items():
-                profiles.append({"platform": platform.lower(), "username": base_username, "url": url, "confidence": 0.95})
+                profiles.append({"platform": platform.lower(), "username": base_username, "url": url, "confidence": 0.95, "pre_verified": True})
+
+        if news_data:
+            # Inject deep footprint sites into profiles for LLM verification
+            for item in news_data.get("news", []):
+                profiles.append({"platform": "news", "username": candidate_name, "url": item["url"], "snippet": item.get("snippet", ""), "confidence": 0.5})
+            for item in news_data.get("web", []):
+                url = item["url"].lower()
+                plat = "web"
+                if "scholar.google" in url:
+                    plat = "scholar"
+                elif "instagram.com" in url:
+                    plat = "instagram"
+                elif "twitter.com" in url or "x.com" in url:
+                    plat = "twitter"
+                elif "tiktok.com" in url:
+                    plat = "tiktok"
+                elif "youtube.com" in url:
+                    plat = "youtube"
+                elif "reddit.com" in url:
+                    plat = "reddit"
+                elif "facebook.com" in url:
+                    plat = "facebook"
+                elif "linkedin.com" in url:
+                    plat = "linkedin"
+                elif "github.com" in url:
+                    plat = "github"
+                    
+                profiles.append({"platform": plat, "username": candidate_name, "url": item["url"], "snippet": item.get("snippet", ""), "confidence": 0.5})
 
         # ── Face Cross-Verification ──────────────────────────────────────────
         # If the user uploaded a probe image, download each profile's photo and
@@ -429,6 +451,42 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 "timeline": graph_data.get("timeline", []),
                 "graph": graph_data.get("graph", {"nodes": [{"id": person_id, "label": candidate_name, "type": "person"}], "edges": []})
             })
+            
+            # --- LAYER 2: MASTER PROFILE CHUNKING & UPSERT ---
+            try:
+                from app.src.vectordb.store import upsert_text_chunks
+                chunks = []
+                
+                # Chunk 1: Identity & Profiles
+                prof_chunk = f"Identity: {candidate_name}\nAliases: {', '.join(candidate_usernames)}\nProfiles:\n"
+                for p in profiles:
+                    prof_chunk += f"- {p.get('platform', '?').upper()}: {p.get('url', '?')} (Snippets: {p.get('snippet', '')[:100]})\n"
+                chunks.append(prof_chunk)
+                
+                # Chunk 2: Claims
+                claims_chunk = f"Claims for {candidate_name}:\n"
+                for c in graph_data.get("claims", []):
+                    claims_chunk += f"- {c.get('predicate', '?')}: {c.get('object', '?')} (Confidence: {c.get('confidence', 0):.0%})\n"
+                chunks.append(claims_chunk)
+                
+                # Chunk 3: Timeline
+                tl_chunk = f"Timeline for {candidate_name}:\n"
+                for t in graph_data.get("timeline", []):
+                    tl_chunk += f"- [{t.get('date', '?')}] {t.get('event', '?')}\n"
+                chunks.append(tl_chunk)
+                
+                # Chunk 4: Graph Topology
+                graph_chunk = f"Graph Topology for {candidate_name}:\nNodes:\n"
+                for n in graph_data.get("graph", {}).get("nodes", []):
+                    graph_chunk += f"- [{n.get('type', '?').upper()}] {n.get('label', '?')}\n"
+                graph_chunk += "Edges:\n"
+                for e in graph_data.get("graph", {}).get("edges", []):
+                    graph_chunk += f"- {e.get('source', '?')} -> {e.get('relation', '?')} -> {e.get('target', '?')}\n"
+                chunks.append(graph_chunk)
+                
+                await upsert_text_chunks(person_id, chunks)
+            except Exception as ex:
+                logger.error(f"Failed to upsert RAG chunks to ChromaDB: {ex}")
 
         job_data = await job_get(job_id) or {"status": "processing", "candidates": []}
         job_data["status"] = "complete"

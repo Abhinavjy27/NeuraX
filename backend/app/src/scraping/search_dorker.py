@@ -1,66 +1,114 @@
 import asyncio
 import logging
-from duckduckgo_search import DDGS
+import urllib.parse
+import httpx
+
+import os
 
 logger = logging.getLogger(__name__)
 
+SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")
+
+from bs4 import BeautifulSoup
+
+async def _ddg_html_search(query: str, max_results: int = 15) -> list:
+    """OSINT search via ScraperAPI targeting DuckDuckGo HTML to get true clean URLs and bypass Datacenter IP blocks."""
+    # Use duckduckgo html endpoint which doesn't dynamically mask URLs
+    target_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    url = f"http://api.scraperapi.com/?api_key={SCRAPER_API_KEY}&url={urllib.parse.quote(target_url)}&premium=true&country_code=us"
+    
+    results = []
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.get(url)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "lxml")
+                
+                for div in soup.find_all("div", class_="result__body"):
+                    if len(results) >= max_results:
+                        break
+                        
+                    title_elem = div.find("h2", class_="result__title")
+                    a_tag = div.find("a", class_="result__url")
+                    snippet_elem = div.find("a", class_="result__snippet")
+                    
+                    if not title_elem or not a_tag or not snippet_elem:
+                        continue
+                        
+                    title = title_elem.text.strip()
+                    raw_url = a_tag.get("href", "")
+                    snippet = snippet_elem.text.strip()
+                    
+                    if "uddg=" in raw_url:
+                        try:
+                            raw_url = urllib.parse.unquote(raw_url.split("uddg=")[1].split("&")[0])
+                        except Exception:
+                            pass
+
+                    results.append({
+                        'url': raw_url,
+                        'title': title,
+                        'snippet': snippet
+                    })
+            else:
+                logger.error(f"ScraperAPI (DDG) returned {response.status_code}: {response.text}")
+                
+        return results
+    except Exception as e:
+        logger.error(f"ScraperAPI OSINT search failed for {query}: {repr(e)}")
+        return results
+
 async def search_news_and_web(query: str) -> dict:
     """
-    Searches DuckDuckGo for News and Web results.
-    Falls back to mock data if curl_cffi/DDGS fails due to ARM64 impersonate bugs.
+    Searches DuckDuckGo via ScraperAPI for News and Web results.
     """
     try:
-        def do_search():
-            results = {"news": [], "web": []}
-            with DDGS() as ddgs:
-                news_results = list(ddgs.news(query, max_results=3))
-                if news_results:
-                    for n in news_results:
-                        results["news"].append({
-                            "title": n.get("title"),
-                            "url": n.get("url"),
-                            "snippet": n.get("body"),
-                            "date": n.get("date")
-                        })
-                
-                web_results = list(ddgs.text(query, max_results=3))
-                if web_results:
-                    for w in web_results:
-                        url = w.get("href", "").lower()
-                        if not any(x in url for x in ["twitter.com", "instagram.com", "github.com", "linkedin.com", "tiktok.com", "youtube.com"]):
-                            results["web"].append({
-                                "title": w.get("title"),
-                                "url": w.get("href"),
-                                "snippet": w.get("body")
-                            })
-            return results
-            
-        data = await asyncio.to_thread(do_search)
-        if not data["news"] and not data["web"]:
-            raise Exception("Empty results")
-        return data
-    except Exception as e:
-        logger.error(f"Failed to fetch News/Web data for {query}: {e}. Returning mock data.")
+        results = {"news": [], "web": []}
+        # Fetch up to 30 results for deep OSINT footprint analysis
+        raw_results = await _ddg_html_search(query, max_results=30)
         
-        # Return rich mocked data to guarantee the Knowledge Graph generates nodes
-        is_holland = "holland" in query.lower()
-        return {
-            "news": [
-                {
-                    "title": f"Breaking: {query.title()} signs new deal with Marvel Studios",
-                    "url": "https://hollywoodreporter.com/news",
-                    "snippet": f"Actor {query.title()} has officially signed a new contract with Marvel Studios to reprise his role. Filming will take place in London and Los Angeles." if is_holland else f"{query.title()} announced a major new project today.",
-                    "date": "2026-09-19"
-                }
-            ],
-            "web": [
-                {
-                    "title": f"{query.title()} - Official Portfolio",
-                    "url": "https://example.com/portfolio",
-                    "snippet": f"{query.title()} is a professional working at Sony Pictures Entertainment and currently resides in Kingston upon Thames, United Kingdom." if is_holland else f"Official homepage and footprint for {query.title()}."
-                }
-            ]
-        }
+        seen_socials = set()
+        seen_urls = set()
+        
+        for i, res in enumerate(raw_results):
+            url = res['url'].lower()
+            
+            # Global deduplication
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            
+            # Allow all social profiles to pass through, but deduplicate by platform
+            # and filter out non-profile links (like posts or directories)
+            is_social = False
+            for platform in ["twitter.com", "instagram.com", "github.com", "linkedin.com", "tiktok.com", "youtube.com", "reddit.com", "facebook.com"]:
+                if platform in url:
+                    is_social = True
+                    # If it's linkedin, only allow actual profiles
+                    if platform == "linkedin.com" and not ("/in/" in url or "/company/" in url):
+                        break # Skip this URL entirely
+                        
+                    if platform not in seen_socials:
+                        seen_socials.add(platform)
+                        results["web"].append(res)
+                    break
+                    
+            if is_social:
+                continue
+                
+            # Heuristic for news vs web
+            if "news" in url or "article" in url or "post" in url:
+                results["news"].append(res)
+            else:
+                results["web"].append(res)
+                
+        if not results["news"] and not results["web"]:
+            raise Exception("Empty results")
+        return results
+    except Exception as e:
+        logger.error(f"Failed to fetch News/Web data for {query}: {e}. Returning empty results.")
+        return {"news": [], "web": []}
 
 import httpx
 
@@ -89,8 +137,4 @@ async def search_wikipedia(query: str) -> dict:
             return {}
     except Exception as e:
         logger.error(f"Wikipedia API failed for {query}: {e}")
-        return {
-            "title": query.title(),
-            "url": f"https://en.wikipedia.org/wiki/{query.replace(' ', '_')}",
-            "summary": f"{query.title()} is a highly notable individual with significant public footprint. They are associated with major international organizations and have a documented history in the entertainment and technology sectors."
-        }
+        return {}

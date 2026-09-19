@@ -67,7 +67,8 @@ async def resolve_identity(candidate_name: str, scraping_results: Dict[str, Any]
 
 def mock_resolve_identity(candidate_name: str, scraping_results: Dict[str, Any]) -> Dict[str, Any]:
     """Fallback if OpenAI fails or key is missing."""
-    platforms = list(scraping_results.get("links", {}).keys())
+    links = scraping_results.get("links", [])
+    platforms = [p.get("platform", "unknown") for p in links] if isinstance(links, list) else list(links.keys())
     return {
         "claim": f"Subject appears to be active on {len(platforms)} platforms.",
         "source_url": ", ".join(platforms),

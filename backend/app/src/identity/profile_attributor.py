@@ -89,8 +89,8 @@ Respond ONLY with valid JSON:
 
 Rules:
 - CONFIRMED (score 0.8-1.0): Strong evidence (name + org/location/role matches)
-- POSSIBLE (score 0.4-0.79): Name matches but bio is thin or ambiguous
-- REJECTED (score 0.0-0.39): Clear mismatch, different person, or generic placeholder"""
+- POSSIBLE (score 0.4-0.79): Name matches but bio is thin, ambiguous, or mentions a different role/company. Do NOT reject simply because the role differs (people change jobs or hold multiple roles).
+- REJECTED (score 0.0-0.39): ONLY reject if there is definitive proof it is a different person (e.g., explicitly wrong country/age, or a completely unrelated famous person)."""
 
     try:
         response = await client.chat.completions.create(
@@ -159,11 +159,22 @@ async def _process_profile(
     profile: Dict,
 ) -> Optional[Dict]:
     """Process a single profile — returns None if REJECTED."""
+    
+    # ── Bypass for official/hardcoded profiles ──
+    if profile.get("pre_verified"):
+        profile["text_attribution"] = "CONFIRMED"
+        profile["attribution_score"] = 0.95
+        profile["attribution_reason"] = "Officially verified via Wikidata or trusted source."
+        return profile
+        
     url = profile.get("url", "")
     platform = profile.get("platform", "unknown")
 
     # Fetch bio
     bio = await _extract_bio_from_page(http_client, url)
+    if not bio:
+        bio = profile.get("snippet", "")
+        
     logger.info(f"[text_attr] {platform}: bio_len={len(bio)}")
 
     # LLM attribution
