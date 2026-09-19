@@ -301,35 +301,7 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         
         # Analyze context vs found data for simple heuristics
         name_score = 0.9 if candidate_name.lower() in context.lower() else 0.5
-        # Real face similarity score (or None if no image)
-        face_match_scores = [p.get("face_confidence") for p in profiles if p.get("face_verified") is True]
-        image_score = (sum(face_match_scores) / len(face_match_scores)) if face_match_scores else (0.75 if embedding else None)
-        org_overlap = 0.8 if linkedin_data else 0.0
-        
-        # Corroboration logic
-        sources_found = sum([1 for x in [linkedin_data, news_data, wiki_data, github_data] if x])
-        corroboration = min(1.0, sources_found * 0.25)
-        
-        # Context score: heavily penalize if "not related" is in context
-        context_score = 0.8
-        contradiction_penalty = 0.0
-        if "not related" in context.lower() or "imposter" in context.lower():
-            context_score = 0.0
-            contradiction_penalty = 1.0
-        
-        scores, verdict = calculate_identity_score(
-            name_score=name_score,
-            image_score=image_score,
-            organization_overlap=org_overlap,
-            source_corroboration=corroboration,
-            username_score=0.8,
-            project_overlap=0.7,
-            context_score=context_score,
-            contradiction_penalty=contradiction_penalty
-        )
-        
-        person_id = f"person_{job_id}"
-        
+        # Build profiles list FIRST
         profiles = []
         if github_data:
             gh_username = github_data.get("username") or github_data.get("login", "")
@@ -370,6 +342,35 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 type="FINDING", step="identity",
                 message=f"✅ Text attribution complete — {confirmed} confirmed, {possible} possible, {len(profiles)} total"
             ))
+
+        # Real face similarity score (or None if no image)
+        face_match_scores = [p.get("face_confidence") for p in profiles if p.get("face_verified") is True]
+        image_score = (sum(face_match_scores) / len(face_match_scores)) if face_match_scores else (0.75 if embedding else None)
+        org_overlap = 0.8 if linkedin_data else 0.0
+        
+        # Corroboration logic
+        sources_found = sum([1 for x in [linkedin_data, news_data, wiki_data, github_data] if x])
+        corroboration = min(1.0, sources_found * 0.25)
+        
+        # Context score: heavily penalize if "not related" is in context
+        context_score = 0.8
+        contradiction_penalty = 0.0
+        if "not related" in context.lower() or "imposter" in context.lower():
+            context_score = 0.0
+            contradiction_penalty = 1.0
+        
+        scores, verdict = calculate_identity_score(
+            name_score=name_score,
+            image_score=image_score,
+            organization_overlap=org_overlap,
+            source_corroboration=corroboration,
+            username_score=0.8,
+            project_overlap=0.7,
+            context_score=context_score,
+            contradiction_penalty=contradiction_penalty
+        )
+        
+        person_id = f"person_{job_id}"
 
         candidate = {
             "person_id": person_id,
