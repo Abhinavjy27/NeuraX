@@ -1,16 +1,16 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Home from "./pages/Home";
-import Results from "./pages/Results";
-import GraphPage from "./pages/Graph";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { ThemeProvider } from "@/components/theme-provider"
+import { DemoOne } from "@/components/demo"
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/results/:jobId" element={<Results />} />
-        <Route path="/graph/:jobId" element={<GraphPage />} />
-      </Routes>
-    </BrowserRouter>
-  );
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<DemoOne />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
+  )
 }

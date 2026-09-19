@@ -1,3 +1,19 @@
 .env
 .agents/
 readme-old.md
+
+# Node / Vite
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+**/.vite/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
