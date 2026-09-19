@@ -12,7 +12,14 @@ const EarthBackground: React.FC = () => {
     const deg = Math.PI / 180;
     const canvas = canvasRef.current;
     
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    // Fix: Disable FLIP_Y and PREMULTIPLY_ALPHA before Three.js creates its internal 3D LUT textures.
+    // WebGL2 forbids these flags on texImage3D; Three.js v0.186 triggers this during renderer init.
+    const gl = canvas.getContext('webgl2', { antialias: true, alpha: true });
+    if (gl) {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    }
+    const renderer = new THREE.WebGLRenderer({ canvas, context: gl || undefined, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
     const scene = new THREE.Scene();
