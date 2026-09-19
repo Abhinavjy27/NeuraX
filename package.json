@@ -1,0 +1,10 @@
+{
+  "name": "neurax",
+  "version": "1.0.0",
+  "description": "Helper scripts for NeuraX",
+  "scripts": {
+    "python": "source .venv/bin/activate && python",
+    "backend:dev": "source .venv/bin/activate && cd backend && python app/main.py",
+    "install:backend": "source .venv/bin/activate && pip install -r backend/requirements.txt"
+  }
+}

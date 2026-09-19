@@ -9,13 +9,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --default-timeout=1000 --progress-bar off --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers
 RUN playwright install chromium --with-deps
 
 # Install spaCy model
-RUN python -m spacy download en_core_web_trf
+RUN python -m spacy download en_core_web_sm
 
 COPY . .
 

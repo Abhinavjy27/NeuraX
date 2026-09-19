@@ -101,9 +101,23 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             type="PROGRESS", step="identity",
             message="🔍 Extracting face embedding..."
         ))
-        # from app.src.identity.face_embedder import extract_embedding
-        # embedding = extract_embedding(image_path)
-        await asyncio.sleep(0.5)  # stub delay
+        from app.src.identity.face_embedder import extract_embedding
+        
+        embedding = None
+        if image_path:
+            # Note: For production, this should run in a thread pool since it's blocking CPU-bound code
+            embedding = await asyncio.to_thread(extract_embedding, image_path)
+            
+        if embedding:
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="identity",
+                message=f"✅ Face embedding extracted ({len(embedding)} dimensions)",
+            ))
+        else:
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="identity",
+                message="⚠️ No face detected in uploaded image, relying on context only.",
+            ))
 
         await emit(job_id, PipelineEvent(
             type="PROGRESS", step="identity",
@@ -114,20 +128,94 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         await asyncio.sleep(0.3)
 
         # ── Layer 2: Multi-Platform Scraping ─────────────────────────────────
-        platforms = ["GitHub", "LinkedIn", "Twitter/X", "Instagram", "YouTube", "Google Scholar", "Patents"]
-        for platform in platforms:
+        from app.src.identity.nlp_extractor import get_primary_candidate
+        
+        candidate_username = get_primary_candidate(context) if context else "torvalds"
+        
+        await emit(job_id, PipelineEvent(
+            type="PROGRESS", step="scraping",
+            message=f"🌐 Scraping GitHub for candidate '{candidate_username}'...",
+        ))
+        
+        from app.src.scraping.github_client import get_github_profile
+        github_data = await get_github_profile(candidate_username)
+        
+        if github_data:
+            repos_str = ", ".join([r["name"] for r in github_data.get("top_repositories", [])])
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="scraping",
+                message=f"✅ Found GitHub: {github_data.get('name', '')} ({github_data.get('followers', 0)} followers)",
+                data={"repos": repos_str, "bio": github_data.get("bio", "")},
+                confidence=0.9
+            ))
+        else:
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="scraping",
+                message=f"⚠️ No GitHub profile found for '{candidate_username}'.",
+            ))
+            
+        # Native Username Checker (API-Free)
+        from app.src.scraping.username_checker import check_all_platforms
+        
+        await emit(job_id, PipelineEvent(
+            type="PROGRESS", step="scraping",
+            message=f"🌐 Hunting for username '{candidate_username}' across 120+ platforms (API-Free)...",
+        ))
+        
+        found_platforms = await check_all_platforms(candidate_username)
+        
+        if found_platforms:
+            platforms_str = ", ".join(found_platforms.keys())
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="scraping",
+                message=f"✅ Candidate active on: {platforms_str}",
+                data={"links": found_platforms},
+                confidence=0.8
+            ))
+        else:
             await emit(job_id, PipelineEvent(
                 type="PROGRESS", step="scraping",
-                message=f"🌐 Scraping {platform}...",
+                message=f"⚠️ No secondary platform profiles found for '{candidate_username}'.",
             ))
-            await asyncio.sleep(0.2)
+            
+        await asyncio.sleep(0.5)
 
         # ── Layer 3: Vector DB ───────────────────────────────────────────────
         await emit(job_id, PipelineEvent(
             type="PROGRESS", step="vectordb",
-            message="🧮 Indexing face + bio embeddings in ChromaDB...",
+            message="💾 Searching Vector DB for existing identities...",
         ))
-        await asyncio.sleep(0.3)
+        
+        from app.src.vectordb.store import search_face, upsert_face
+        
+        if embedding:
+            # 1. Search for existing faces
+            # ChromaDB cosine distance (0.0 is perfect match, 1.0 is completely different)
+            # Threshold of 0.4 usually means the same person for Facenet512
+            similar_faces = await asyncio.to_thread(search_face, embedding, n_results=1)
+            
+            if similar_faces and similar_faces[0]["distance"] < 0.4:
+                match = similar_faces[0]
+                await emit(job_id, PipelineEvent(
+                    type="FINDING", step="vectordb",
+                    message=f"✅ Face matched existing record in DB (Distance: {match['distance']:.3f})",
+                    data={"db_id": match["id"], "metadata": match["metadata"]},
+                    confidence=0.95
+                ))
+            else:
+                # 2. If not found, save this new face
+                new_db_id = f"face_{job_id}"
+                success = await asyncio.to_thread(upsert_face, new_db_id, embedding, {"username": candidate_username})
+                if success:
+                    await emit(job_id, PipelineEvent(
+                        type="PROGRESS", step="vectordb",
+                        message=f"💾 Saved new face embedding to Vector DB with ID '{new_db_id}'.",
+                    ))
+        else:
+            await emit(job_id, PipelineEvent(
+                type="PROGRESS", step="vectordb",
+                message="⚠️ No face embedding available to search in Vector DB.",
+            ))
 
         # ── Layer 4: Entity Resolution Agent ─────────────────────────────────
         await emit(job_id, PipelineEvent(
