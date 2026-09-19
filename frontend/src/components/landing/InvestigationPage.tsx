@@ -983,7 +983,7 @@ export const InvestigationPage: React.FC = () => {
 
                       <div className="bg-[#060911] border border-slate-800 rounded-xl overflow-hidden h-[380px] w-full">
                         <ForceGraph2D
-                          graphData={graphData}
+                          graphData={{ nodes: graphData.nodes || [], links: graphData.edges || [] }}
                           nodeLabel="label"
                           nodeColor={(node: any) => {
                             if (node.id === 'person_root') return '#818cf8'; // indigo-400
