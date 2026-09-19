@@ -4,7 +4,7 @@ import { DemoOne } from "@/components/demo"
 
 export default function App() {
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<DemoOne />} />
