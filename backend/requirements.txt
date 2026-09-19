@@ -17,6 +17,7 @@ aiosqlite==0.20.0           # async SQLite driver
 # ─── Identity Resolution ───────────────────────────────────────────────────────
 deepface==0.0.93
 tensorflow==2.15.1
+tf-keras==2.15.0
 spacy==3.7.4
 # After install: python -m spacy download en_core_web_trf
 
@@ -28,7 +29,7 @@ beautifulsoup4==4.12.3
 lxml==5.2.2                 # fast HTML parser for BS4
 instaloader==4.11.0         # Instagram public profiles
 scholarly==1.7.11           # Google Scholar (unofficial scraper)
-duckduckgo-search          # search engine dorking — no key required
+duckduckgo-search>=6.2.11
 
 # ─── Vector DB ─────────────────────────────────────────────────────────────────
 chromadb==0.5.3
