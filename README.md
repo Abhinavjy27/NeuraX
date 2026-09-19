@@ -313,9 +313,7 @@ NeuraX/
 
 ---
 
-## 👥 Team & Task Split
-
-**2 Backend · 2 Frontend.** The API contract below is agreed by all four people in the first 30 minutes, before anyone codes independently — this is what prevents integration issues later. Frontend builds against `data/fixtures/*.json` matching this contract from hour 0, so it is never blocked waiting on backend.
+## 🔌 API Contract
 
 | Endpoint | Returns |
 |---|---|
@@ -504,42 +502,7 @@ A claim with `conflict_reason` set is rendered flagged, not hidden.
 }
 ```
 
----
 
-### Backend — Person 1: Discovery & Candidate Signals
-**Owns:** `src/identity/`, `src/discovery/`
-- Input validation and consent gate (`consent_confirmed`, seed check) on `/api/analyze`
-- Username/candidate generator (name → handle variants)
-- GitHub API client, YouTube Data API client
-- Web/search discovery + public page fetcher — Google Programmable Search / DuckDuckGo for URLs, Playwright to actually render and pull page content
-- Face embedding extraction + similarity function (embedding kept in memory only)
-- NLP context parsing (spaCy NER) for names/orgs/locations
-- **Ships:** `/api/analyze` and, per candidate, the raw per-signal scores in `[0, 1]` (or `null`) that Person 2's scoring engine consumes
-
-### Backend — Person 2: Correlation, Evidence & Reasoning
-**Owns:** `src/correlation/`, `src/evidence/`, `src/output/`, `tests/eval/`
-- Entity resolution (fuzzy matching, alias/username merging)
-- Multi-signal scoring engine — owns the actual weights, the `identity_score` formula, and the verdict rules
-- LLM extraction layer → structured `Claim` objects (roles, orgs, events, projects, patents)
-- Evidence attachment — every `Claim` gets `Evidence[]`
-- Timeline + graph data builder (data only, not rendering)
-- Evaluation harness (metrics + ablations, see below)
-- **Ships:** `/api/candidates` (after scoring), `/api/identity`, `/api/claims`, `/api/timeline`, `/api/graph`
-
-### Frontend — Person 1: Core Dashboard & API Integration
-**Owns:** `dashboard/src/core/`
-- API client (`axios`/`fetch`) / data-fetching hooks, built against `data/fixtures/` from hour 0
-- Candidate list with per-signal breakdown and verdict badges
-- Identity overview component — canonical name, confidence badge, alias list
-- Evidence view component — click a claim, see source list/excerpts/confidence ("why do we believe this")
-- App state management (React Context or a lightweight store) and routing
-
-### Frontend — Person 2: Timeline, Graph & Demo
-**Owns:** `dashboard/src/visualize/`
-- Timeline visualization component for extracted events/roles
-- Relationship graph visualization (`networkx` data → `vis-network`/D3 component), interactive on org/project/event nodes
-- Report/export view (human-readable + JSON download)
-- Demo script and pitch narrative for judges, built around the four demo cases below
 
 ---
 
