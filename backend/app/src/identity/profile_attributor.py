@@ -88,9 +88,9 @@ Respond ONLY with valid JSON:
 }}
 
 Rules:
-- CONFIRMED (score 0.8-1.0): Strong evidence (name + org/location/role matches)
-- POSSIBLE (score 0.4-0.79): Name matches but bio is thin, ambiguous, or mentions a different role/company. Do NOT reject simply because the role differs (people change jobs or hold multiple roles).
-- REJECTED (score 0.0-0.39): ONLY reject if there is definitive proof it is a different person (e.g., explicitly wrong country/age, or a completely unrelated famous person)."""
+- CONFIRMED (score 0.8-1.0): Strong evidence (name + org/location/role matches).
+- POSSIBLE (score 0.4-0.79): Name matches but bio is thin or ambiguous. If the profile is for a platform where people rarely post professional details (like Instagram or TikTok), be generous and mark as POSSIBLE if the name/handle is a very close match.
+- REJECTED (score 0.0-0.39): Reject if there is definitive proof it is a different person. CRITICAL: If the target is a well-known person/celebrity/actor, and the profile explicitly lists a completely unrelated ordinary profession (e.g. "Software Engineer", "Dentist"), you MUST REJECT it."""
 
     try:
         response = await client.chat.completions.create(

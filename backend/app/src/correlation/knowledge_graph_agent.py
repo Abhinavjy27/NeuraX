@@ -32,8 +32,9 @@ async def synthesize_knowledge_graph(candidate_name: str, scraping_results: Dict
       ],
       "timeline": [
         {
-          "date": "YYYY or YYYY-MM",
-          "event": "Description of the footprint event",
+          "date": "YYYY or YYYY-MM or YYYY-MM-DD",
+          "event": "Rich description of the milestone (e.g. Started working at XYZ as Role, Published paper ABC, Joined Platform)",
+          "type": "employment | education | publication | social_joining | other",
           "confidence": float (0.0 - 1.0)
         }
       ],

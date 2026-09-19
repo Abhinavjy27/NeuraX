@@ -21,6 +21,7 @@ import {
   Network,
   ShieldCheck,
 } from 'lucide-react';
+import ForceGraph2D from 'react-force-graph-2d';
 
 // API base URL supports VITE_API_BASE or defaults to Vite proxy (/api)
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
@@ -980,18 +981,28 @@ export const InvestigationPage: React.FC = () => {
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto pr-1">
-                        {graphData.nodes?.map((node, i) => (
-                          <div
-                            key={i}
-                            className="bg-[#060911] border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs"
-                          >
-                            <span className="font-medium text-slate-200">{node.label}</span>
-                            <span className="text-[10px] font-mono uppercase bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded">
-                              {node.type}
-                            </span>
-                          </div>
-                        ))}
+                      <div className="bg-[#060911] border border-slate-800 rounded-xl overflow-hidden h-[380px] w-full">
+                        <ForceGraph2D
+                          graphData={graphData}
+                          nodeLabel="label"
+                          nodeColor={(node: any) => {
+                            if (node.id === 'person_root') return '#818cf8'; // indigo-400
+                            switch(node.type) {
+                              case 'organization': return '#10b981'; // emerald-500
+                              case 'platform': return '#f43f5e'; // rose-500
+                              case 'location': return '#f59e0b'; // amber-500
+                              case 'project': return '#0ea5e9'; // sky-500
+                              default: return '#94a3b8'; // slate-400
+                            }
+                          }}
+                          nodeRelSize={6}
+                          linkColor={() => '#334155'} // slate-700
+                          linkDirectionalParticles={2}
+                          linkDirectionalParticleWidth={2}
+                          width={800} // This is just a fallback; flex container handles actual width
+                          height={380}
+                          backgroundColor="#060911"
+                        />
                       </div>
                     </div>
                   )}
@@ -1014,24 +1025,41 @@ export const InvestigationPage: React.FC = () => {
                   )}
                   {timelineStatus === 'ready' && timelineEvents.length > 0 && (
                     <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
-                      {timelineEvents.map((ev, i) => (
-                        <div
-                          key={i}
-                          className="flex items-start gap-4 p-3 bg-[#060911] border border-slate-800/80 rounded-xl text-xs"
-                        >
-                          <div className="w-20 shrink-0 font-mono text-[11px] text-indigo-400 pt-0.5">
-                            {ev.date || 'Undated'}
+                      {timelineEvents.map((ev: any, i) => {
+                        let badgeColor = 'bg-slate-500/10 text-slate-400 border-slate-500/20';
+                        switch(ev.type) {
+                          case 'employment': badgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'; break;
+                          case 'education': badgeColor = 'bg-sky-500/10 text-sky-400 border-sky-500/20'; break;
+                          case 'publication': badgeColor = 'bg-purple-500/10 text-purple-400 border-purple-500/20'; break;
+                          case 'social_joining': badgeColor = 'bg-rose-500/10 text-rose-400 border-rose-500/20'; break;
+                        }
+                        
+                        return (
+                          <div
+                            key={i}
+                            className="flex items-start gap-4 p-3 bg-[#060911] border border-slate-800/80 rounded-xl text-xs"
+                          >
+                            <div className="w-20 shrink-0 font-mono text-[11px] text-indigo-400 pt-0.5">
+                              {ev.date || 'Undated'}
+                            </div>
+                            <div className="flex-1 text-slate-200">
+                              <p className="font-medium mb-1">{ev.event}</p>
+                              <div className="flex items-center gap-2 mt-2">
+                                {ev.type && (
+                                  <span className={`text-[9px] font-mono uppercase border px-1.5 py-0.5 rounded ${badgeColor}`}>
+                                    {ev.type.replace('_', ' ')}
+                                  </span>
+                                )}
+                                {ev.confidence && (
+                                  <span className="text-[10px] font-mono text-slate-500">
+                                    Conf: {(ev.confidence * 100).toFixed(0)}%
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                          <div className="flex-1 text-slate-200">
-                            <p className="font-medium mb-1">{ev.event}</p>
-                            {ev.confidence && (
-                              <span className="text-[10px] font-mono text-slate-500">
-                                Confidence: {(ev.confidence * 100).toFixed(0)}%
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                   {timelineStatus === 'ready' && timelineEvents.length === 0 && (

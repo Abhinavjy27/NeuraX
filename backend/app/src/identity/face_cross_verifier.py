@@ -24,42 +24,90 @@ HEADERS = {
 async def _fetch_image_url(client: httpx.AsyncClient, source: str, data: Dict) -> Optional[str]:
     """
     Extracts a profile photo URL from a scraped source's data dict.
+    Supports: LinkedIn, GitHub, Wikipedia, Reddit, Instagram, Facebook, Twitter/X, YouTube.
     """
+    import re
     try:
+        url = data.get("url", "")
+
         if source == "linkedin":
-            # DuckDuckGo search snippet — try to get og:image from the page
-            url = data.get("url")
             if url:
-                r = await client.get(url, timeout=4.0, follow_redirects=True)
+                r = await client.get(url, timeout=6.0, follow_redirects=True)
                 if r.status_code == 200:
-                    import re
                     match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\']+)', r.text)
                     if match:
                         return match.group(1)
 
         elif source == "reddit":
-            # Reddit JSON API returns icon_img
-            url = data.get("url", "").replace("/u/", "/user/")
+            url = url.replace("/u/", "/user/")
             if url:
                 r = await client.get(url.rstrip("/") + "/about.json",
                                      headers={"User-Agent": "NeuraX-OSINT/1.0"}, timeout=4.0)
                 if r.status_code == 200:
                     icon = r.json().get("data", {}).get("icon_img", "")
                     if icon and "http" in icon:
-                        return icon.split("?")[0]  # strip query params
+                        return icon.split("?")[0]
 
         elif source == "github":
-            # GitHub API returns avatar_url directly
-            return data.get("avatar_url")
+            avatar = data.get("avatar_url")
+            if avatar:
+                return avatar
+            # Fallback: extract username from URL and hit the API
+            if url and "github.com" in url:
+                username = url.rstrip("/").split("/")[-1]
+                r = await client.get(f"https://api.github.com/users/{username}", timeout=4.0)
+                if r.status_code == 200:
+                    return r.json().get("avatar_url")
 
-        elif source == "wikipedia":
-            # Use Wikipedia REST API to get the page image
+        elif source == "wikipedia" or source == "wiki":
             name = data.get("name") or data.get("title", "")
             if name:
                 api_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{name.replace(' ', '_')}"
                 r = await client.get(api_url, timeout=4.0)
                 if r.status_code == 200:
                     return r.json().get("originalimage", {}).get("source")
+
+        elif source == "instagram":
+            # Try og:image from the profile page
+            if url:
+                r = await client.get(url, timeout=6.0, follow_redirects=True)
+                if r.status_code == 200:
+                    match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\']+)', r.text)
+                    if match:
+                        return match.group(1)
+
+        elif source in ("twitter", "twitter/x"):
+            # Try og:image from profile page
+            if url:
+                r = await client.get(url, timeout=6.0, follow_redirects=True)
+                if r.status_code == 200:
+                    match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\']+)', r.text)
+                    if match:
+                        return match.group(1)
+
+        elif source == "facebook":
+            if url:
+                r = await client.get(url, timeout=6.0, follow_redirects=True)
+                if r.status_code == 200:
+                    match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\']+)', r.text)
+                    if match:
+                        return match.group(1)
+
+        elif source == "youtube":
+            if url:
+                r = await client.get(url, timeout=6.0, follow_redirects=True)
+                if r.status_code == 200:
+                    match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\']+)', r.text)
+                    if match:
+                        return match.group(1)
+
+        # Generic fallback: try og:image on any URL
+        elif url and url.startswith("http"):
+            r = await client.get(url, timeout=5.0, follow_redirects=True)
+            if r.status_code == 200:
+                match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](https?://[^"\']+)', r.text)
+                if match:
+                    return match.group(1)
 
     except Exception as e:
         logger.debug(f"Could not fetch image for {source}: {e}")
@@ -89,7 +137,9 @@ def _verify_faces_sync(probe_path: str, candidate_path: str) -> Dict:
             img1_path=probe_path,
             img2_path=candidate_path,
             model_name="Facenet512",
-            enforce_detection=True,
+            enforce_detection=False,  # Tolerate low-quality scraped thumbnails
+            detector_backend="retinaface",  # More accurate face detection
+            align=True,
             silent=True,
         )
         return {
@@ -129,16 +179,18 @@ async def cross_verify_profiles(
         for profile in profiles:
             platform = profile.get("platform", "").lower()
 
-            # Map platform → scraping_payload key
+            # Map platform → scraping_payload key (with fallback to profile URL)
             source_data = None
             if platform == "linkedin":
-                source_data = scraping_payload.get("linkedin") or {}
+                source_data = scraping_payload.get("linkedin") or {"url": profile.get("url", "")}
             elif platform == "reddit":
                 source_data = {"url": profile.get("url", "")}
             elif platform == "github":
-                source_data = scraping_payload.get("github") or {}
+                source_data = scraping_payload.get("github") or {"url": profile.get("url", "")}
             elif platform in ("wikipedia", "wiki"):
                 source_data = scraping_payload.get("wikipedia") or {}
+            elif platform in ("instagram", "twitter", "twitter/x", "facebook", "youtube", "tiktok"):
+                source_data = {"url": profile.get("url", "")}
 
             # Try to get a photo URL
             photo_url = None
@@ -170,11 +222,11 @@ async def cross_verify_profiles(
                 if face_verified:
                     profile["face_verified"] = True
                     profile["face_confidence"] = round(face_confidence, 3)
-                    profile["confidence"] = round(min(0.99, profile.get("confidence", 0.8) + 0.1), 3)
+                    profile["confidence"] = round(min(0.99, profile.get("confidence", 0.8) + 0.15), 3)
                     verified_profiles.append(profile)
                     logger.info(f"[face_verify] ✅ MATCH {platform} (dist={distance:.3f})")
                 else:
-                    # Face doesn't match — exclude this profile
+                    # Face doesn't match — exclude this profile to prevent false positives
                     logger.info(f"[face_verify] ❌ MISMATCH {platform} (dist={distance:.3f}) — excluded")
 
             except Exception as e:

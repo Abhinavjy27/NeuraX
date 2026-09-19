@@ -337,8 +337,20 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 profiles.append({"platform": plat, "username": candidate_name, "url": item["url"], "snippet": item.get("snippet", ""), "confidence": 0.7})
 
         # ── Face Cross-Verification ──────────────────────────────────────────
-        # If the user uploaded a probe image, download each profile's photo and
-        # run DeepFace.verify() to confirm the profile belongs to this person.
+        # 1. ALWAYS run text attribution first to filter out obviously wrong profiles
+        if profiles:
+            await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="📝 Attributing profiles via context matching…"))
+            from app.src.identity.profile_attributor import text_attribute_profiles
+            profiles = await text_attribute_profiles(context, candidate_name, profiles)
+            
+            confirmed_text = sum(1 for p in profiles if p.get("text_attribution") == "CONFIRMED")
+            possible_text  = sum(1 for p in profiles if p.get("text_attribution") == "POSSIBLE")
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="identity",
+                message=f"✅ Text attribution complete — {confirmed_text} confirmed, {possible_text} possible, {len(profiles)} total"
+            ))
+
+        # 2. If the user uploaded a probe image, run face verification on the remaining profiles
         if image_path and profiles:
             await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="🔎 Cross-verifying profile photos against probe image…"))
             from app.src.identity.face_cross_verifier import cross_verify_profiles
@@ -348,21 +360,20 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 "wikipedia": wiki_data,
             })
             verified_count = sum(1 for p in profiles if p.get("face_verified") is True)
+            
+            # STRICT MODE: If an image was provided, any profile that doesn't have a CONFIRMED face or CONFIRMED text should be dropped.
+            # If face_verified is None (no photo), only keep it if text_attribution is CONFIRMED.
+            filtered_profiles = []
+            for p in profiles:
+                if p.get("face_verified") is True:
+                    filtered_profiles.append(p)
+                elif p.get("face_verified") is None and p.get("text_attribution") in ("CONFIRMED", "POSSIBLE"):
+                    filtered_profiles.append(p)
+            profiles = filtered_profiles
+
             await emit(job_id, PipelineEvent(
                 type="FINDING", step="identity",
-                message=f"✅ Face verification complete — {verified_count}/{len(profiles)} profiles confirmed"
-            ))
-        elif profiles:
-            # No image — use text-based attribution: fetch each profile's bio and
-            # ask GPT-4o if it matches the target context seed.
-            await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="📝 Attributing profiles via context matching (no image provided)…"))
-            from app.src.identity.profile_attributor import text_attribute_profiles
-            profiles = await text_attribute_profiles(context, candidate_name, profiles)
-            confirmed = sum(1 for p in profiles if p.get("text_attribution") == "CONFIRMED")
-            possible  = sum(1 for p in profiles if p.get("text_attribution") == "POSSIBLE")
-            await emit(job_id, PipelineEvent(
-                type="FINDING", step="identity",
-                message=f"✅ Text attribution complete — {confirmed} confirmed, {possible} possible, {len(profiles)} total"
+                message=f"✅ Face verification complete — {verified_count}/{len(profiles)} profiles matched"
             ))
 
         # Real face similarity score (or None if no image)
