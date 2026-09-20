@@ -5,15 +5,34 @@
 ### Digital Identity Intelligence System
 **NeuraX Hackathon 3.0 · Domain 3 · AI in Cybersecurity**
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Cloudflare%20Tunnel-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://highland-opt-fee-critical.trycloudflare.com/investigation)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![AI Powered](https://img.shields.io/badge/AI-Powered-FF6B6B?style=for-the-badge&logo=openai&logoColor=white)]()
 [![Status](https://img.shields.io/badge/Status-Active%20Development-00C896?style=for-the-badge)]()
 
 > **"Piece together a person's entire public digital identity — automatically, reliably, and with evidence."**
 
+### 🌐 [Live Deployment & Investigation Console](https://highland-opt-fee-critical.trycloudflare.com/investigation)
+**Try NeuraX Live in Browser**: [https://highland-opt-fee-critical.trycloudflare.com/investigation](https://highland-opt-fee-critical.trycloudflare.com/investigation)
+
 </div>
 
 ---
+
+> [!IMPORTANT]
+> ### 🚀 Live Interactive Demo
+> **NeuraX is currently deployed and live online!**  
+> Access the Trinetra Investigation Console directly at:  
+> 👉 **[https://highland-opt-fee-critical.trycloudflare.com/investigation](https://highland-opt-fee-critical.trycloudflare.com/investigation)**  
+> 
+> *Key features available in the live console:*
+> - 🔍 **Multi-Source OSINT Discovery**: Real-time cross-platform scraping (LinkedIn, Scholar, GitHub, Instagram, News).
+> - 👤 **Facial Cross-Verification**: DeepFace facial match confirmation against probe images.
+> - 🕸️ **Interactive Knowledge Graph**: 2D topology with 3D Earth visualization.
+> - 💬 **GraphRAG Chatbot**: Interrogate discovered footprints with a retrieval-augmented AI analyst.
+
+---
+
 
 ## 📌 Problem Understanding
 
@@ -318,11 +337,14 @@ NeuraX/
 | Endpoint | Returns |
 |---|---|
 | `POST /api/analyze` | `{ job_id }` — kicks off discovery for an image + context |
+| `GET /api/stream/{job_id}` | Live SSE telemetry stream of real-time discovery events |
 | `GET /api/candidates/{job_id}` | `CandidateProfile[]` with per-signal scores and a verdict |
 | `GET /api/identity/{person_id}` | Resolved `Person` (canonical name, aliases, usernames, confidence, profiles) |
 | `GET /api/claims/{person_id}` | `Claim[]`, each with nested `Evidence[]` |
 | `GET /api/timeline/{person_id}` | Chronological event list |
 | `GET /api/graph/{person_id}` | Graph `{ nodes[], edges[] }` |
+| `GET /api/report/{person_id}` | Printable HTML Intelligence Dossier & report |
+| `POST /api/chat/{person_id}` | 3-Layer GraphRAG interactive analyst chat agent |
 
 ### API Specification — Inputs & Outputs
 
