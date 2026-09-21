@@ -22,3 +22,8 @@ venv/
 *.png
 *.jpeg
 
+# Dumps & Cache
+*dump*.html
+.pytest_cache/
+.DS_Store
+

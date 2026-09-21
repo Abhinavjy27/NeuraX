@@ -4,6 +4,7 @@ Serves the intelligence pipeline + SSE streaming endpoint.
 """
 
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
@@ -12,7 +13,9 @@ import uuid
 import json
 import os
 import logging
-from typing import AsyncGenerator
+import mimetypes
+import base64
+from typing import AsyncGenerator, Optional
 import redis.asyncio as aioredis
 
 from app.models import CandidateProfile, CandidateScores, Profile, Person, Claim, Evidence, Entity
@@ -47,23 +50,48 @@ async def shutdown():
     if redis_client:
         await redis_client.aclose()
 
-# Redis helpers — 24 hour TTL
+# Storage layer — Redis with transparent in-memory fallback for local execution and tests
 JOB_TTL = 86400
 PERSON_TTL = 86400
 
+job_store: dict[str, dict] = {}
+person_store: dict[str, dict] = {}
+
 async def job_get(job_id: str) -> dict | None:
-    raw = await redis_client.get(f"job:{job_id}")
-    return json.loads(raw) if raw else None
+    if redis_client is not None:
+        try:
+            raw = await redis_client.get(f"job:{job_id}")
+            if raw:
+                return json.loads(raw)
+        except Exception as e:
+            logger.debug(f"Redis get failed: {e}")
+    return job_store.get(job_id)
 
 async def job_set(job_id: str, data: dict):
-    await redis_client.setex(f"job:{job_id}", JOB_TTL, json.dumps(data))
+    job_store[job_id] = data
+    if redis_client is not None:
+        try:
+            await redis_client.setex(f"job:{job_id}", JOB_TTL, json.dumps(data))
+        except Exception as e:
+            logger.debug(f"Redis set failed: {e}")
 
 async def person_get(person_id: str) -> dict | None:
-    raw = await redis_client.get(f"person:{person_id}")
-    return json.loads(raw) if raw else None
+    if redis_client is not None:
+        try:
+            raw = await redis_client.get(f"person:{person_id}")
+            if raw:
+                return json.loads(raw)
+        except Exception as e:
+            logger.debug(f"Redis get failed: {e}")
+    return person_store.get(person_id)
 
 async def person_set(person_id: str, data: dict):
-    await redis_client.setex(f"person:{person_id}", PERSON_TTL, json.dumps(data))
+    person_store[person_id] = data
+    if redis_client is not None:
+        try:
+            await redis_client.setex(f"person:{person_id}", PERSON_TTL, json.dumps(data))
+        except Exception as e:
+            logger.debug(f"Redis set failed: {e}")
 
 # SSE queues stay in-memory (per-process, per-request lifetime only)
 job_streams: dict[str, asyncio.Queue] = {}
@@ -161,6 +189,38 @@ async def get_graph(person_id: str):
         raise HTTPException(status_code=404, detail="NOT_FOUND")
     return person.get("graph", {"nodes": [], "edges": []})
 
+@app.get("/api/report/{person_id}", response_class=HTMLResponse)
+async def get_report(person_id: str):
+    person = await person_get(person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="NOT_FOUND")
+    from app.src.output.report_generator import generate_html_report
+    return HTMLResponse(content=generate_html_report(person))
+
+def get_image_data_uri(image_path: str) -> Optional[str]:
+    """Encodes a local image as a base64 data URI for self-contained HTML reports."""
+    if not image_path or not os.path.exists(image_path):
+        return None
+    try:
+        mime, _ = mimetypes.guess_type(image_path)
+        if not mime:
+            mime = "image/jpeg"
+        with open(image_path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:{mime};base64,{encoded}"
+    except Exception as e:
+        logger.warning(f"Could not encode image to data URI: {e}")
+        return None
+
+@app.get("/api/uploads/{filename}")
+async def get_uploaded_image(filename: str):
+    """Serves uploaded probe images."""
+    clean_name = os.path.basename(filename)
+    filepath = os.path.join("data/input", clean_name)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Uploaded file not found")
+    return FileResponse(filepath)
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -189,7 +249,7 @@ async def chat_with_graph(person_id: str, request: ChatRequest):
 
     # === LAYER 2: VECTOR RETRIEVAL ===
     from app.src.vectordb.store import search_text_chunks
-    retrieved_chunks = await search_text_chunks(search_query, person_id, n_results=4)
+    retrieved_chunks = await search_text_chunks(search_query, person_id, n_results=5)
     
     rag_context = ""
     if retrieved_chunks:
@@ -199,18 +259,34 @@ async def chat_with_graph(person_id: str, request: ChatRequest):
         
     subject_name = person.get("identity", {}).get("canonical_name", "the subject")
 
+    # Structured Dossier Summary (always grounded regardless of vector search distance)
+    summary_context = f"Subject: {subject_name}\n"
+    if person.get("timeline"):
+        summary_context += "Chronological Milestones & Projects:\n"
+        for t in person.get("timeline", []):
+            summary_context += f"- [{t.get('date', '?')}] {t.get('event', '?')}\n"
+    if person.get("claims"):
+        summary_context += "Verified Claims:\n"
+        for c in person.get("claims", []):
+            summary_context += f"- {c.get('predicate')}: {c.get('object')}\n"
+
     # === LAYER 3: SYNTHESIZED GENERATION ===
     system_prompt = f"""You are a highly analytical OSINT Intelligence Agent for NeuraX.
-Your task is to answer the user's question about {subject_name} using ONLY the extracted intelligence chunks provided below.
+Your task is to answer the user's question about {subject_name} using the extracted intelligence dossier, chronological milestones, and retrieved knowledge graph chunks provided below.
+
+=== STRUCTURED DOSSIER MILESTONES & CLAIMS ===
+{summary_context}
 
 === RETRIEVED INTELLIGENCE CONTEXT ===
 {rag_context}
 ======================================
 
 RULES:
-1. Answer ONLY using the intelligence context above. Do not hallucinate or use external knowledge.
-2. If the context does not contain the answer, explicitly state: "I do not have enough evidence in the current intelligence graph to answer that."
-3. Be concise, direct, and analytical. Do not be conversational."""
+1. Ground your answer in the provided dossier milestones, verified claims, Wikipedia biography, and intelligence chunks.
+2. You can synthesize and infer answers from the chronological timeline (e.g. latest projects, recent movies/films, employment history, publications).
+3. If the user asks about recent or latest works (such as latest movie, recent job, latest publication), inspect the chronological milestones to identify the most recent relevant entry.
+4. Only state "I do not have enough evidence in the current intelligence graph to answer that." if the provided context is genuinely completely devoid of any relevant information.
+5. Be concise, direct, and analytical."""
 
     try:
         response = await client.chat.completions.create(
@@ -239,6 +315,7 @@ async def event_generator(job_id: str) -> AsyncGenerator:
         yield {"data": json.dumps(event)}
 
 async def run_pipeline(job_id: str, image_path: str, context: str):
+    person_id = f"person_{job_id}"
     try:
         await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="🔍 Extracting face embedding..."))
         from app.src.identity.face_embedder import extract_embedding
@@ -247,13 +324,43 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         if embedding:
             await emit(job_id, PipelineEvent(type="FINDING", step="identity", message=f"✅ Face embedding extracted"))
 
-        from app.src.identity.nlp_extractor import get_primary_candidate
+        from app.src.identity.nlp_extractor import parse_target_prompt
         from app.src.identity.username_generator import generate_usernames
-        candidate_name = get_primary_candidate(context) if context else "torvalds"
-        candidate_usernames = generate_usernames(candidate_name)
+        
+        parsed_target = await parse_target_prompt(context) if context else {
+            "candidate_name": "torvalds",
+            "role": None,
+            "organization": None,
+            "location": None,
+            "search_keywords": [],
+            "enriched_search_query": "torvalds",
+            "raw_context": context
+        }
+        candidate_name = parsed_target.get("candidate_name") or "torvalds"
+        enriched_search_query = parsed_target.get("enriched_search_query") or candidate_name
+        org_keyword = parsed_target.get("organization")
+        role_keyword = parsed_target.get("role")
+        target_keywords = parsed_target.get("search_keywords", [])
+        aliases = parsed_target.get("aliases", [])
+
+        # Emit informative target identification finding
+        finding_msg = f"🎯 Target identified: {candidate_name}"
+        if aliases:
+            finding_msg += f" (aliases: {', '.join(aliases)})"
+        elif org_keyword and role_keyword:
+            finding_msg += f" ({role_keyword} at {org_keyword})"
+        elif org_keyword:
+            finding_msg += f" (affiliated with {org_keyword})"
+        elif role_keyword:
+            finding_msg += f" ({role_keyword})"
+        await emit(job_id, PipelineEvent(type="FINDING", step="identity", message=finding_msg))
+
+        candidate_usernames = generate_usernames(candidate_name, aliases=aliases, max_variations=30)
+        candidate_pool_aliases = list(dict.fromkeys((aliases or []) + candidate_usernames))
 
         from app.src.scraping.linkedin_scraper import search_linkedin_profile
         from app.src.scraping.search_dorker import search_news_and_web, search_wikipedia
+        from app.src.scraping.scholar_search import search_google_scholar
         from app.src.scraping.github_client import get_github_profile
         from app.src.scraping.wikidata_client import get_wikidata_socials
         from app.src.scraping.username_checker import check_all_platforms
@@ -261,18 +368,19 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         # Determine base username
         base_username = candidate_usernames[0] if candidate_usernames else candidate_name.lower().replace(" ", "")
 
-        await emit(job_id, PipelineEvent(type="PROGRESS", step="scraping", message="🌐 Querying Wikipedia, GitHub, OSINT footprints and Wikidata..."))
+        await emit(job_id, PipelineEvent(type="PROGRESS", step="scraping", message="🌐 Querying Wikipedia, GitHub, Scholar, OSINT footprints and Wikidata..."))
         
-        # Concurrently gather data
+        # Concurrently gather data with enriched queries and candidate pool
         wiki_task = asyncio.create_task(search_wikipedia(candidate_name))
-        github_task = asyncio.create_task(get_github_profile(candidate_name, is_email=False))
-        linkedin_task = asyncio.create_task(search_linkedin_profile(candidate_name))
-        news_task = asyncio.create_task(search_news_and_web(candidate_name))
+        github_task = asyncio.create_task(get_github_profile(candidate_name, is_email=False, aliases=candidate_pool_aliases))
+        linkedin_task = asyncio.create_task(search_linkedin_profile(candidate_name, context_keyword=org_keyword))
+        news_task = asyncio.create_task(search_news_and_web(candidate_name, context_query=enriched_search_query, aliases=aliases))
         wikidata_task = asyncio.create_task(get_wikidata_socials(candidate_name))
         social_task = asyncio.create_task(check_all_platforms(base_username))
+        scholar_task = asyncio.create_task(search_google_scholar(candidate_name, organization=org_keyword, aliases=aliases))
         
-        wiki_data, github_data, linkedin_data, news_data, wikidata_socials, social_data = await asyncio.gather(
-            wiki_task, github_task, linkedin_task, news_task, wikidata_task, social_task, return_exceptions=True
+        wiki_data, github_data, linkedin_data, news_data, wikidata_socials, social_data, scholar_data = await asyncio.gather(
+            wiki_task, github_task, linkedin_task, news_task, wikidata_task, social_task, scholar_task, return_exceptions=True
         )
 
         if isinstance(wiki_data, Exception): wiki_data = None
@@ -281,16 +389,37 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         if isinstance(news_data, Exception): news_data = None
         if isinstance(wikidata_socials, Exception): wikidata_socials = {}
         if isinstance(social_data, Exception): social_data = {}
+        if isinstance(scholar_data, Exception): scholar_data = None
 
         if not isinstance(social_data, dict):
             social_data = {}
         if isinstance(wikidata_socials, dict):
             social_data.update(wikidata_socials)
+
+        if wiki_data and wiki_data.get("summary"):
+            short_summary = wiki_data.get("summary", "")[:120]
+            await emit(job_id, PipelineEvent(
+                type="FINDING",
+                step="scraping",
+                message=f"📖 Wikipedia: Discovered verified biographical entry for {candidate_name} — {short_summary}..."
+            ))
             
         # (Hardcoded fallbacks removed - delegating all scraping to Playwright OSINT)
         # Identity Scoring
         from app.src.correlation.identity_scorer import calculate_identity_score
         
+        def _extract_handle(url: str, default: str) -> str:
+            try:
+                import urllib.parse
+                parts = [p for p in urllib.parse.urlparse(url).path.strip("/").split("/") if p]
+                if parts:
+                    if parts[0] in ("in", "user", "u", "channel", "c", "p", "reel") and len(parts) > 1:
+                        return parts[1]
+                    return parts[0]
+            except Exception:
+                pass
+            return default
+
         # Analyze context vs found data for simple heuristics
         name_score = 0.9 if candidate_name.lower() in context.lower() else 0.5
         # Build profiles list FIRST
@@ -298,24 +427,66 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         if github_data:
             gh_username = github_data.get("username") or github_data.get("login", "")
             if gh_username:
-                profiles.append({"platform": "github", "username": gh_username, "url": f"https://github.com/{gh_username}", "confidence": 0.9})
+                profiles.append({"platform": "github", "username": gh_username, "title": f"GitHub: {gh_username}", "url": f"https://github.com/{gh_username}", "confidence": 0.9})
         if linkedin_data and linkedin_data.get("url"):
-            profiles.append({"platform": "linkedin", "username": candidate_name, "url": linkedin_data["url"], "confidence": 0.8})
+            li_handle = _extract_handle(linkedin_data["url"], candidate_name)
+            li_prof = {
+                "platform": "linkedin",
+                "username": li_handle,
+                "title": linkedin_data.get("title") or f"LinkedIn: {candidate_name}",
+                "url": linkedin_data["url"],
+                "snippet": linkedin_data.get("snippet", ""),
+                "confidence": 0.85
+            }
+            if linkedin_data.get("photo_url"):
+                li_prof["photo_url"] = linkedin_data["photo_url"]
+            profiles.append(li_prof)
         if wiki_data and wiki_data.get("url"):
-            profiles.append({"platform": "wikipedia", "username": candidate_name, "url": wiki_data["url"], "confidence": 0.95})
+            profiles.append({"platform": "wikipedia", "username": candidate_name, "title": f"Wikipedia: {candidate_name}", "url": wiki_data["url"], "confidence": 0.95})
         
         if social_data:
             for platform, url in social_data.items():
-                profiles.append({"platform": platform.lower(), "username": base_username, "url": url, "confidence": 0.95, "pre_verified": True})
+                handle = _extract_handle(url, base_username)
+                profiles.append({"platform": platform.lower(), "username": handle, "title": f"{platform.capitalize()}: @{handle}", "url": url, "confidence": 0.95, "pre_verified": True})
+
+        if scholar_data and isinstance(scholar_data, dict) and scholar_data.get("url"):
+            profiles.append({
+                "platform": "scholar",
+                "username": scholar_data.get("name", candidate_name),
+                "title": scholar_data.get("title", f"Scholar: {candidate_name}"),
+                "url": scholar_data["url"],
+                "snippet": scholar_data.get("snippet", ""),
+                "confidence": 0.85
+            })
 
         if news_data:
-            # Inject deep footprint sites into profiles for LLM verification
+            # Inject deep footprint sites into profiles for LLM verification, deduplicating URLs
+            seen_profile_urls = {p.get("url", "").lower().rstrip("/") for p in profiles if p.get("url")}
             for item in news_data.get("news", []):
-                profiles.append({"platform": "news", "username": candidate_name, "url": item["url"], "snippet": item.get("snippet", ""), "confidence": 0.5})
+                u_norm = item.get("url", "").lower().rstrip("/")
+                if u_norm in seen_profile_urls:
+                    continue
+                seen_profile_urls.add(u_norm)
+                profiles.append({
+                    "platform": "news",
+                    "username": candidate_name,
+                    "title": item.get("title", "News Mention"),
+                    "url": item["url"],
+                    "snippet": item.get("snippet", ""),
+                    "confidence": 0.6
+                })
             for item in news_data.get("web", []):
+                u_norm = item.get("url", "").lower().rstrip("/")
+                if u_norm in seen_profile_urls:
+                    continue
+                seen_profile_urls.add(u_norm)
                 url = item["url"].lower()
                 plat = "web"
-                if "scholar.google" in url:
+                if "scholar.google" in url or "semanticscholar.org" in url:
+                    plat = "scholar"
+                elif "academia.edu" in url:
+                    plat = "academia"
+                elif "researchgate.net" in url:
                     plat = "scholar"
                 elif "instagram.com" in url:
                     plat = "instagram"
@@ -333,15 +504,24 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                     plat = "linkedin"
                 elif "github.com" in url:
                     plat = "github"
-                    
-                profiles.append({"platform": plat, "username": candidate_name, "url": item["url"], "snippet": item.get("snippet", ""), "confidence": 0.7})
+                
+                handle = _extract_handle(item["url"], candidate_name)
+                title = item.get("title", "")
+                profiles.append({
+                    "platform": plat,
+                    "username": handle,
+                    "title": title,
+                    "url": item["url"],
+                    "snippet": item.get("snippet", ""),
+                    "confidence": 0.7
+                })
 
         # ── Face Cross-Verification ──────────────────────────────────────────
         # 1. ALWAYS run text attribution first to filter out obviously wrong profiles
         if profiles:
             await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="📝 Attributing profiles via context matching…"))
             from app.src.identity.profile_attributor import text_attribute_profiles
-            profiles = await text_attribute_profiles(context, candidate_name, profiles)
+            profiles = await text_attribute_profiles(context, candidate_name, profiles, aliases=candidate_pool_aliases)
             
             confirmed_text = sum(1 for p in profiles if p.get("text_attribution") == "CONFIRMED")
             possible_text  = sum(1 for p in profiles if p.get("text_attribution") == "POSSIBLE")
@@ -350,36 +530,80 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 message=f"✅ Text attribution complete — {confirmed_text} confirmed, {possible_text} possible, {len(profiles)} total"
             ))
 
+            # Sync selected LinkedIn profile back to linkedin_data (ensuring downstream avatar/KG uses the context-matched profile)
+            selected_li = next((p for p in profiles if p.get("platform") == "linkedin"), None)
+            if selected_li:
+                linkedin_data = {
+                    "name": candidate_name,
+                    "url": selected_li.get("url"),
+                    "title": selected_li.get("title", ""),
+                    "snippet": selected_li.get("snippet", ""),
+                    "photo_url": selected_li.get("photo_url"),
+                    "text_attribution": selected_li.get("text_attribution", "CONFIRMED")
+                }
+                if selected_li.get("attribution_reason"):
+                    await emit(job_id, PipelineEvent(
+                        type="FINDING", step="identity",
+                        message=f"🎯 Selected LinkedIn: {selected_li['url']} ({selected_li['attribution_reason']})"
+                    ))
+
         # 2. If the user uploaded a probe image, run face verification on the remaining profiles
         if image_path and profiles:
-            await emit(job_id, PipelineEvent(type="PROGRESS", step="identity", message="🔎 Cross-verifying profile photos against probe image…"))
+            await emit(job_id, PipelineEvent(
+                type="PROGRESS",
+                step="identity",
+                message="🔎 Cross-verifying photos across discovered profiles (LinkedIn, Instagram, Twitter/X, Facebook, YouTube, TikTok, GitHub) against probe image…"
+            ))
             from app.src.identity.face_cross_verifier import cross_verify_profiles
-            profiles = await cross_verify_profiles(image_path, profiles, {
-                "linkedin": linkedin_data,
-                "github": github_data,
-                "wikipedia": wiki_data,
-            })
+
+            async def _emit_face_finding(msg: str):
+                await emit(job_id, PipelineEvent(type="FINDING", step="identity", message=msg))
+
+            profiles = await cross_verify_profiles(
+                image_path,
+                profiles,
+                {
+                    "linkedin": linkedin_data,
+                    "github": github_data,
+                    "wikipedia": wiki_data,
+                    "social_media": social_data,
+                },
+                emit_callback=_emit_face_finding
+            )
             verified_count = sum(1 for p in profiles if p.get("face_verified") is True)
             
             # STRICT MODE: If an image was provided, any profile that doesn't have a CONFIRMED face or CONFIRMED text should be dropped.
-            # If face_verified is None (no photo), only keep it if text_attribution is CONFIRMED.
+            # If face_verified is None (no photo), only keep it if text_attribution is CONFIRMED or POSSIBLE.
             filtered_profiles = []
             for p in profiles:
                 if p.get("face_verified") is True:
                     filtered_profiles.append(p)
                 elif p.get("face_verified") is None and p.get("text_attribution") in ("CONFIRMED", "POSSIBLE"):
                     filtered_profiles.append(p)
+                elif p.get("face_verified") is False:
+                    # Keep if confirmed text attribution so user sees it in dossier with mismatch indicator
+                    if p.get("text_attribution") == "CONFIRMED":
+                        filtered_profiles.append(p)
             profiles = filtered_profiles
 
             await emit(job_id, PipelineEvent(
                 type="FINDING", step="identity",
-                message=f"✅ Face verification complete — {verified_count}/{len(profiles)} profiles matched"
+                message=f"✅ Visual cross-verification complete across all platforms — {verified_count}/{len(profiles)} matched"
             ))
 
         # Real face similarity score (or None if no image)
         face_match_scores = [p.get("face_confidence") for p in profiles if p.get("face_verified") is True]
         image_score = (sum(face_match_scores) / len(face_match_scores)) if face_match_scores else (0.75 if embedding else None)
-        org_overlap = 0.8 if linkedin_data else 0.0
+        # Check if organization or context keywords appear in found data
+        org_matched = False
+        if org_keyword:
+            org_low = org_keyword.lower()
+            for p in profiles:
+                p_text = f"{p.get('title', '')} {p.get('snippet', '')} {p.get('url', '')}".lower()
+                if org_low in p_text:
+                    org_matched = True
+                    break
+        org_overlap = 0.85 if (linkedin_data or org_matched) else 0.0
         
         # Corroboration logic
         sources_found = sum([1 for x in [linkedin_data, news_data, wiki_data, github_data] if x])
@@ -403,14 +627,100 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
             contradiction_penalty=contradiction_penalty
         )
         
-        person_id = f"person_{job_id}"
+        # Prioritize profiles: LinkedIn first, Socials next, Scholar next, Articles next
+        from app.src.identity.profile_attributor import sort_profiles_by_priority
+        profiles = sort_profiles_by_priority(profiles)
+
+        scraping_payload = {
+            "target_context": context,
+            "target_name": candidate_name,
+            "parsed_intelligence": parsed_target,
+            "linkedin": linkedin_data,
+            "news_and_web": news_data,
+            "scholar": scholar_data,
+            "wikipedia": wiki_data,
+            "github": github_data,
+            "social_media": social_data,
+            "profiles": profiles,
+            "aliases": candidate_pool_aliases
+        }
+
+        # Resolve probe image if an image was provided with the query
+        probe_image_filename = os.path.basename(image_path) if image_path and os.path.exists(image_path) else None
+        probe_image_url = f"/api/uploads/{probe_image_filename}" if probe_image_filename else None
+        probe_image_data_uri = get_image_data_uri(image_path) if image_path and os.path.exists(image_path) else None
+
+        # Resolve primary scraped avatar for candidate
+        from app.src.identity.face_cross_verifier import resolve_candidate_avatar, verify_probe_against_scraped
+        avatar_url = await resolve_candidate_avatar(profiles, scraping_payload, probe_image_path=image_path)
+
+        # Cross-verify uploaded probe image against scraped candidate avatar
+        face_match_warning = None
+        is_face_match = None
+
+        if image_path and os.path.exists(image_path) and avatar_url and avatar_url != probe_image_url:
+            match_res = await verify_probe_against_scraped(image_path, avatar_url)
+            is_face_match = match_res.get("is_match")
+            similarity = match_res.get("similarity", 0.0)
+            sim_pct = int(similarity * 100)
+            if is_face_match is False:
+                face_match_warning = f"Warning: The uploaded image does not match the image scraped for {candidate_name} (similarity {sim_pct}%). The image does not belong to this person."
+                contradiction_penalty = 1.0
+                image_score = 0.05
+                scores, verdict = calculate_identity_score(
+                    name_score=name_score,
+                    image_score=image_score,
+                    organization_overlap=org_overlap,
+                    source_corroboration=corroboration,
+                    username_score=0.8,
+                    project_overlap=0.7,
+                    context_score=context_score,
+                    contradiction_penalty=contradiction_penalty
+                )
+                await emit(job_id, PipelineEvent(
+                    type="WARNING",
+                    step="identity",
+                    message=f"⚠️ {face_match_warning}"
+                ))
+            elif is_face_match is True:
+                await emit(job_id, PipelineEvent(
+                    type="FINDING",
+                    step="identity",
+                    message=f"✅ Face match verified: Uploaded image matches the scraped online image for {candidate_name} (similarity {sim_pct}%)."
+                ))
+
+        # If no online avatar was resolved but user uploaded an image in query, use probe image
+        if not avatar_url and probe_image_url:
+            avatar_url = probe_image_url
+
+        if probe_image_url:
+            await emit(job_id, PipelineEvent(
+                type="FINDING", step="identity",
+                message="📸 Query probe image attached and integrated into identity report"
+            ))
+
+        # Telemetry: notify user which platform provided the verified visual identity
+        if avatar_url and avatar_url != probe_image_url:
+            matched_plat = next((p.get("platform", "").capitalize() for p in profiles if p.get("photo_url") == avatar_url), None)
+            if matched_plat:
+                plat_display = "Twitter/X" if matched_plat.lower() in ("twitter", "twitter/x") else matched_plat
+                await emit(job_id, PipelineEvent(
+                    type="FINDING", step="identity",
+                    message=f"📸 Resolved target visual identity from {plat_display}: extracted and verified"
+                ))
 
         candidate = {
             "person_id": person_id,
             "canonical_name_guess": candidate_name,
             "verdict": verdict,
             "scores": scores.model_dump(),
-            "profiles_found": profiles
+            "profiles_found": profiles,
+            "avatar_url": avatar_url,
+            "probe_image_url": probe_image_url,
+            "probe_image_path": image_path,
+            "face_match_warning": face_match_warning,
+            "is_face_match": is_face_match,
+            "wikipedia": wiki_data,
         }
 
         job_data = await job_get(job_id) or {"status": "processing", "candidates": []}
@@ -418,19 +728,10 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
         await job_set(job_id, job_data)
         await emit(job_id, PipelineEvent(type="FINDING", step="correlation", message=f"Generated Candidate with verdict: {verdict}"))
 
-        if verdict in ["confirmed", "possible"]:
+        if verdict in ["confirmed", "possible"] or face_match_warning:
             # Entity Resolution Agent for Claims
             from app.src.correlation.entity_resolution_agent import resolve_identity
             from app.src.correlation.knowledge_graph_agent import synthesize_knowledge_graph
-            
-            scraping_payload = {
-                "linkedin": linkedin_data,
-                "news_and_web": news_data,
-                "wikipedia": wiki_data,
-                "github": github_data,
-                "social_media": social_data,
-                "profiles": profiles
-            }
             
             # Run parallel synthesis
             evidence_data, graph_data = await asyncio.gather(
@@ -456,11 +757,19 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                     "aliases": candidate_usernames,
                     "usernames": candidate_usernames,
                     "confidence": scores.identity_score,
-                    "profiles": profiles
+                    "profiles": profiles,
+                    "avatar_url": avatar_url,
+                    "probe_image_url": probe_image_url,
+                    "probe_image_path": image_path,
+                    "probe_image_data_uri": probe_image_data_uri,
+                    "face_match_warning": face_match_warning,
+                    "is_face_match": is_face_match,
+                    "wikipedia": wiki_data,
                 },
                 "claims": graph_data.get("claims", []),
                 "timeline": graph_data.get("timeline", []),
-                "graph": graph_data.get("graph", {"nodes": [{"id": person_id, "label": candidate_name, "type": "person"}], "edges": []})
+                "graph": graph_data.get("graph", {"nodes": [{"id": person_id, "label": candidate_name, "type": "person"}], "edges": []}),
+                "wikipedia": wiki_data,
             })
             
             # --- LAYER 2: MASTER PROFILE CHUNKING & UPSERT ---
@@ -471,23 +780,34 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                 # Chunk 1: Identity & Profiles
                 prof_chunk = f"Identity: {candidate_name}\nAliases: {', '.join(candidate_usernames)}\nProfiles:\n"
                 for p in profiles:
-                    prof_chunk += f"- {p.get('platform', '?').upper()}: {p.get('url', '?')} (Snippets: {p.get('snippet', '')[:100]})\n"
+                    prof_chunk += f"- {p.get('platform', '?').upper()}: {p.get('url', '?')} (Title: {p.get('title', '')} | Snippet: {p.get('snippet', '')[:120]})\n"
                 chunks.append(prof_chunk)
+
+                # Chunk 2: Wikipedia Biography & Key Facts
+                if wiki_data and (wiki_data.get("summary") or wiki_data.get("facts")):
+                    wiki_chunk = f"Wikipedia Biography & Key Facts for {candidate_name}:\n"
+                    if wiki_data.get("summary"):
+                        wiki_chunk += f"Summary: {wiki_data.get('summary')}\n"
+                    if wiki_data.get("facts"):
+                        wiki_chunk += "Key Facts:\n" + "\n".join(f"- {f}" for f in wiki_data.get("facts", [])) + "\n"
+                    if wiki_data.get("url"):
+                        wiki_chunk += f"Wikipedia URL: {wiki_data.get('url')}\n"
+                    chunks.append(wiki_chunk)
                 
-                # Chunk 2: Claims
+                # Chunk 3: Claims
                 claims_chunk = f"Claims for {candidate_name}:\n"
                 for c in graph_data.get("claims", []):
                     claims_chunk += f"- {c.get('predicate', '?')}: {c.get('object', '?')} (Confidence: {c.get('confidence', 0):.0%})\n"
                 chunks.append(claims_chunk)
                 
-                # Chunk 3: Timeline
-                tl_chunk = f"Timeline for {candidate_name}:\n"
+                # Chunk 4: Timeline
+                tl_chunk = f"Chronological Timeline & Filmography for {candidate_name}:\n"
                 for t in graph_data.get("timeline", []):
                     tl_chunk += f"- [{t.get('date', '?')}] {t.get('event', '?')}\n"
                 chunks.append(tl_chunk)
                 
-                # Chunk 4: Graph Topology
-                graph_chunk = f"Graph Topology for {candidate_name}:\nNodes:\n"
+                # Chunk 5: Graph Topology
+                graph_chunk = f"Knowledge Graph Topology & Projects for {candidate_name}:\nNodes:\n"
                 for n in graph_data.get("graph", {}).get("nodes", []):
                     graph_chunk += f"- [{n.get('type', '?').upper()}] {n.get('label', '?')}\n"
                 graph_chunk += "Edges:\n"

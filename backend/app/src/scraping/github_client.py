@@ -1,7 +1,7 @@
 import os
 import httpx
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def _get_url(target_url: str) -> str:
         return f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={urllib.parse.quote(target_url)}"
     return target_url
 
-async def get_github_profile(query: str, is_email: bool = False) -> Optional[Dict[str, Any]]:
+async def get_github_profile(query: str, is_email: bool = False, aliases: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
     """
     Search GitHub for a user by email or name, then fetch their profile.
     """
@@ -32,7 +32,7 @@ async def get_github_profile(query: str, is_email: bool = False) -> Optional[Dic
     target_search_url = f"https://api.github.com/search/users?q={search_q}&per_page=1"
     search_url = _get_url(target_search_url)
     
-    async with httpx.AsyncClient(timeout=45.0) as client:
+    async with httpx.AsyncClient(timeout=12.0) as client:
         try:
             # 0. Search for the user
             search_resp = await client.get(search_url, headers=HEADERS)
@@ -52,6 +52,12 @@ async def get_github_profile(query: str, is_email: bool = False) -> Optional[Dic
             profile_resp.raise_for_status()
             
             user_data = profile_resp.json()
+            
+            # Verify user matches candidate identity
+            from app.src.identity.profile_attributor import matches_candidate_identity
+            gh_name = f"{user_data.get('login', '')} {user_data.get('name', '')}"
+            if not is_email and not matches_candidate_identity(query, gh_name, aliases=aliases):
+                return None
             
             # Extract core details
             profile = {

@@ -48,7 +48,8 @@ def extract_embedding(image_path: str) -> Optional[List[float]]:
 def verify_faces(img1_path: str, img2_path: str) -> dict:
     """
     Verify if two images contain the same person.
-    Returns a dictionary with 'verified' (bool) and 'distance' (float).
+    Returns a dictionary with 'verified' (bool), 'distance' (float), and 'similarity' (float).
+    Rule: below 50% similarity is considered a failure (not the same person).
     """
     try:
         result = DeepFace.verify(
@@ -57,11 +58,15 @@ def verify_faces(img1_path: str, img2_path: str) -> dict:
             model_name=MODEL_NAME,
             enforce_detection=True
         )
+        distance = float(result.get("distance", 1.0))
+        similarity = max(0.0, min(1.0, 1.0 - distance))
+        verified = bool(similarity >= 0.50)
         return {
-            "verified": result.get("verified", False),
-            "distance": result.get("distance", 1.0),
-            "threshold": result.get("threshold", 0.3)
+            "verified": verified,
+            "distance": distance,
+            "similarity": round(similarity, 3),
+            "threshold": 0.50
         }
     except Exception as e:
         logger.error(f"Face verification failed: {str(e)}")
-        return {"verified": False, "distance": 1.0, "threshold": 0.3}
+        return {"verified": False, "distance": 1.0, "similarity": 0.0, "threshold": 0.50}

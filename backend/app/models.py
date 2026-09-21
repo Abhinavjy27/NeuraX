@@ -1,11 +1,14 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Literal
+from typing import List, Optional, Dict, Literal, Any
 
 class Profile(BaseModel):
     platform: str
     username: str
     url: str
     confidence: float
+    title: Optional[str] = None
+    snippet: Optional[str] = None
+    photo_url: Optional[str] = None
 
 class Person(BaseModel):
     person_id: str
@@ -14,6 +17,11 @@ class Person(BaseModel):
     usernames: List[str]
     confidence: float
     profiles: List[Profile]
+    avatar_url: Optional[str] = None
+    probe_image_url: Optional[str] = None
+    face_match_warning: Optional[str] = None
+    is_face_match: Optional[bool] = None
+    wikipedia: Optional[Dict[str, Any]] = None
 
 class Entity(BaseModel):
     entity_id: str
@@ -54,3 +62,8 @@ class CandidateProfile(BaseModel):
     verdict: Literal["confirmed", "possible", "insufficient_evidence"]
     scores: CandidateScores
     profiles_found: List[Profile]
+    avatar_url: Optional[str] = None
+    probe_image_url: Optional[str] = None
+    face_match_warning: Optional[str] = None
+    is_face_match: Optional[bool] = None
+    wikipedia: Optional[Dict[str, Any]] = None

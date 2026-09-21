@@ -7,13 +7,13 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 # Initialize AsyncOpenAI client using the API key from environment
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY") or "mock-key")
 
 async def resolve_identity(candidate_name: str, scraping_results: Dict[str, Any], db_results: Dict[str, Any]) -> Dict[str, Any]:
     """
     Uses GPT-4o to analyze all gathered OSINT signals and output a structured Evidence Schema.
     """
-    if not client.api_key:
+    if not client.api_key or client.api_key == "mock-key":
         logger.warning("OPENAI_API_KEY not found. Using fallback mock resolution.")
         return mock_resolve_identity(candidate_name, scraping_results)
 

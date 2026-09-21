@@ -1,59 +1,101 @@
 import re
-from typing import List, Set
+from typing import List, Set, Optional
 
-def generate_usernames(base_name: str, max_variations: int = 5) -> List[str]:
+def _get_token_variants(token: str) -> List[str]:
+    """Returns the token as-is without loose transliterations."""
+    return [token.lower()]
+
+def generate_usernames(base_name: str, max_variations: int = 30, aliases: Optional[List[str]] = None) -> List[str]:
     """
-    Takes a raw name (e.g., 'John Doe') and generates common username variations.
-    Capped at max_variations to avoid hitting rate limits too aggressively.
+    Takes a raw name or username (e.g., 'Abhishek Polisetty', 'abhishek_polishetty', 'abhishek.polishetty')
+    and generates common username variations, including transliteration variants
+    (e.g. 'abhishek_polishetty', 'abhishek.polishetty', 'abhishekpolisetti')
+    and any explicitly specified aliases, adding them to the candidate pool.
     """
     if not base_name:
         return []
 
-    # Clean the name: remove special chars, trim, convert to lower
-    clean_name = re.sub(r'[^a-zA-Z0-9\s]', '', base_name).strip().lower()
-    parts = clean_name.split()
+    candidate_pool: List[str] = []
+    seen: Set[str] = set()
 
-    variations: Set[str] = set()
-    
-    if len(parts) == 1:
-        # Single word name/alias (e.g., 'mrbeast', 'linus')
-        variations.add(parts[0])
-        variations.add(f"{parts[0]}123")
-        variations.add(f"{parts[0]}official")
-        variations.add(f"the{parts[0]}")
-    elif len(parts) >= 2:
-        first = parts[0]
-        last = parts[-1]
-        
-        # john_doe
-        variations.add(f"{first}_{last}")
-        # johndoe
-        variations.add(f"{first}{last}")
-        # john.doe
-        variations.add(f"{first}.{last}")
-        # jdoe
-        variations.add(f"{first[0]}{last}")
-        # johnd
-        variations.add(f"{first}{last[0]}")
-        # doejohn
-        variations.add(f"{last}{first}")
-        
-    # Also add the exact raw string stripped of spaces, just in case it's a known handle
-    variations.add(base_name.replace(" ", "").lower())
+    def add_variation(val: str):
+        v = val.strip().lower()
+        if v and v not in seen:
+            seen.add(v)
+            candidate_pool.append(v)
 
-    # Sort to prioritize the most common ones (johndoe, john_doe, jdoe)
-    # Convert to list and limit
-    prioritized = []
-    
-    # Priority 1: Exact matches or firstlast
-    exact = base_name.replace(" ", "").lower()
-    if exact in variations:
-        prioritized.append(exact)
-        variations.remove(exact)
-        
-    # Priority 2: Add others
-    for v in sorted(list(variations), key=len):
-        if len(prioritized) < max_variations:
-            prioritized.append(v)
-            
-    return prioritized[:max_variations]
+    def _process_name_tokens(tokens: List[str]):
+        if not tokens:
+            return
+        if len(tokens) == 1:
+            single = tokens[0]
+            for p in _get_token_variants(single):
+                add_variation(p)
+                add_variation(f"{p}123")
+                add_variation(f"{p}official")
+                add_variation(f"the{p}")
+        else:
+            first_token = tokens[0]
+            last_token = tokens[-1]
+            first_variants = _get_token_variants(first_token)
+            last_variants = _get_token_variants(last_token)
+
+            # 1. Primary: exact full name entity forms
+            add_variation("".join(tokens))
+            add_variation("_".join(tokens))
+            add_variation(".".join(tokens))
+            add_variation("-".join(tokens))
+
+            # 2. Add transliteration variants for surname (e.g. abhishek_polishetty, abhishek.polishetty)
+            for lv in last_variants:
+                if lv != last_token:
+                    if len(tokens) == 2:
+                        add_variation(f"{first_token}_{lv}")
+                        add_variation(f"{first_token}.{lv}")
+                        add_variation(f"{first_token}{lv}")
+                        add_variation(f"{first_token}-{lv}")
+                    else:
+                        mid = tokens[1:-1]
+                        add_variation(f"{first_token}_{'_'.join(mid)}_{lv}")
+                        add_variation(f"{first_token}.{'.'.join(mid)}.{lv}")
+                        add_variation(f"{first_token}{''.join(mid)}{lv}")
+
+            # 3. Add transliteration variants for first name
+            for fv in first_variants:
+                if fv != first_token:
+                    if len(tokens) == 2:
+                        add_variation(f"{fv}_{last_token}")
+                        add_variation(f"{fv}.{last_token}")
+                        add_variation(f"{fv}{last_token}")
+                        add_variation(f"{fv}-{last_token}")
+
+            # 4. Add inverted forms
+            add_variation("".join(reversed(tokens)))
+            add_variation("_".join(reversed(tokens)))
+            add_variation(".".join(reversed(tokens)))
+
+            for lv in last_variants:
+                if lv != last_token:
+                    add_variation(f"{lv}_{first_token}")
+                    add_variation(f"{lv}.{first_token}")
+                    add_variation(f"{lv}{first_token}")
+
+    # Add raw base_name if it looks like a clean handle
+    clean_raw = base_name.strip().lower()
+    if clean_raw:
+        add_variation(clean_raw)
+
+    # Split base_name by whitespace, underscore, dot, or hyphen
+    parts = [p for p in re.split(r'[\s._-]+', clean_raw) if p]
+    _process_name_tokens(parts)
+
+    # If explicit aliases were supplied, add their variations too
+    if aliases:
+        for alias in aliases:
+            a_clean = alias.strip().lower()
+            if a_clean:
+                add_variation(a_clean)
+                a_parts = [p for p in re.split(r'[\s._-]+', a_clean) if p]
+                _process_name_tokens(a_parts)
+
+    return candidate_pool[:max_variations]

@@ -1,0 +1,498 @@
+/* ── TRINETRA Investigation Console — Scoped Styles ── */
+
+.consoleRoot {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  color: #f1f5f9;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: transparent;
+  overflow-x: hidden;
+  user-select: auto;
+}
+
+/* Fixed Environmental Earth Canvas Backdrop */
+.earthLayer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.earthBackdropOverlay {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 35%, rgba(2, 6, 15, 0.25) 0%, rgba(2, 6, 15, 0.65) 100%);
+  pointer-events: none;
+}
+
+/* Slim Top Header */
+.topBar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding: 0.65rem 1.25rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+  background: rgba(3, 7, 18, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.topBarInner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* Brand Group */
+.brandGroup {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.consoleBadge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  color: #818cf8;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+}
+
+.brandSeparator {
+  height: 0.875rem;
+  width: 1px;
+  background: rgba(51, 65, 85, 0.6);
+  margin: 0 0.25rem;
+}
+
+.subBrandLabel {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+/* Status Badges */
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+.statusReady {
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(51, 65, 85, 0.5);
+}
+
+.statusActive {
+  color: #818cf8;
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.statusComplete {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.statusError {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+/* Exit Console Button */
+.exitBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  text-decoration: none;
+  transition: all 0.15s ease-in-out;
+}
+
+.exitBtn:hover {
+  color: #f8fafc;
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(71, 85, 105, 0.7);
+}
+
+/* Main Workspace */
+.workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 10;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 7rem;
+}
+
+/* Horizontal Command Surface (Signature Reticle Framing) */
+.commandSurface {
+  position: relative;
+  border-radius: 1rem;
+  background: rgba(7, 12, 24, 0.68);
+  border: 1px solid rgba(51, 65, 85, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 1.25rem;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  margin-bottom: 1.5rem;
+  transition: border-color 0.2s ease;
+}
+
+.commandSurface:focus-within {
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+/* Technical Reticle Corner Brackets (Signature Visual Motif) */
+.cornerBracketTL {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid #818cf8;
+  border-left: 2px solid #818cf8;
+  border-top-left-radius: 0.35rem;
+  pointer-events: none;
+}
+
+.cornerBracketTR {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid #818cf8;
+  border-right: 2px solid #818cf8;
+  border-top-right-radius: 0.35rem;
+  pointer-events: none;
+}
+
+.cornerBracketBL {
+  position: absolute;
+  bottom: -1px;
+  left: -1px;
+  width: 10px;
+  height: 10px;
+  border-bottom: 2px solid #818cf8;
+  border-left: 2px solid #818cf8;
+  border-bottom-left-radius: 0.35rem;
+  pointer-events: none;
+}
+
+.cornerBracketBR {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 10px;
+  height: 10px;
+  border-bottom: 2px solid #818cf8;
+  border-right: 2px solid #818cf8;
+  border-bottom-right-radius: 0.35rem;
+  pointer-events: none;
+}
+
+/* Dominant Target Context Input */
+.targetTextarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: #f8fafc;
+  padding-right: 2rem;
+}
+
+.targetTextarea::placeholder {
+  color: #64748b;
+}
+
+/* Inline Attachment Chip */
+.attachChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 0.5rem;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  font-size: 0.75rem;
+  color: #e2e8f0;
+}
+
+/* Dossier Surfaces */
+.dossierSurface {
+  border-radius: 1rem;
+  background: rgba(7, 12, 24, 0.62);
+  border: 1px solid rgba(51, 65, 85, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.4);
+}
+
+.metricsStrip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: rgba(3, 7, 18, 0.55);
+  border: 1px solid rgba(51, 65, 85, 0.35);
+  margin-bottom: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .metricsStrip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Source Card / Profile Item */
+.profileItem {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.4);
+  padding: 0.75rem 0.875rem;
+  background: rgba(5, 10, 20, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  text-decoration: none;
+  min-height: 84px;
+  transition: all 0.15s ease-in-out;
+}
+
+.profileItem:hover {
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(10, 18, 36, 0.8);
+}
+
+/* Stacked Profile Tile Container */
+.stackedTile {
+  display: flex;
+  flex-direction: column;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.4);
+  background: rgba(5, 10, 20, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 0.75rem 0.875rem;
+  transition: all 0.2s ease-in-out;
+  position: relative;
+  min-height: 92px;
+}
+
+.stackedTile:hover {
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(8, 14, 28, 0.85);
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+}
+
+/* Faux card deck illusion for tiles with stacked results from the same site */
+.stackedDeckWrapper {
+  position: relative;
+  width: 100%;
+}
+
+.stackedDeckWrapper.hasMultiple::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -4px;
+  height: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(71, 85, 105, 0.35);
+  border-radius: 0 0 0.75rem 0.75rem;
+  z-index: 0;
+  pointer-events: none;
+  transition: all 0.2s ease;
+}
+
+.stackedDeckWrapper.hasMultiple::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -8px;
+  height: 8px;
+  background: rgba(10, 16, 30, 0.55);
+  border: 1px solid rgba(51, 65, 85, 0.25);
+  border-radius: 0 0 0.75rem 0.75rem;
+  z-index: -1;
+  pointer-events: none;
+  transition: all 0.2s ease;
+}
+
+.stackedDeckWrapper.hasMultiple:hover::after {
+  border-color: rgba(99, 102, 241, 0.35);
+  bottom: -5px;
+}
+
+.stackedDeckWrapper.hasMultiple:hover::before {
+  border-color: rgba(99, 102, 241, 0.25);
+  bottom: -9px;
+}
+
+/* Docked Activity Rail */
+.activityRail {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  border-top: 1px solid rgba(51, 65, 85, 0.45);
+  background: rgba(3, 7, 18, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.activityRailBar {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0.65rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.activityRailBar:hover {
+  background: rgba(30, 41, 59, 0.25);
+}
+
+/* ── Expanded Image Modal / Lightbox ── */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(2, 6, 18, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: modalFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modalDialog {
+  position: relative;
+  max-width: 860px;
+  width: 100%;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(11, 17, 33, 0.96);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  border-radius: 1.25rem;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.95), 0 0 50px rgba(99, 102, 241, 0.25);
+  overflow: hidden;
+  animation: modalScaleUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modalScaleUp {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.modalHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  background: rgba(3, 7, 18, 0.7);
+}
+
+.modalBody {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 0.6) 0%, rgba(2, 6, 18, 0.95) 100%);
+}
+
+.modalFooter {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid rgba(51, 65, 85, 0.5);
+  background: rgba(3, 7, 18, 0.75);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  .consoleRoot *,
+  .commandSurface,
+  .profileItem,
+  .activityRail,
+  .modalBackdrop,
+  .modalDialog {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

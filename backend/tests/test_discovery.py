@@ -61,3 +61,41 @@ async def test_get_github_profile_not_found(mock_get):
 async def test_check_all_platforms():
     results = await check_all_platforms("torvalds")
     assert isinstance(results, dict)
+
+@pytest.mark.asyncio
+async def test_extract_wiki_summary_and_facts_rule_based():
+    from app.src.scraping.search_dorker import _extract_wiki_summary_and_facts
+    title = "Linus Torvalds"
+    desc = "Finnish and American software engineer (born 1969)"
+    extract = "Linus Benedict Torvalds is a Finnish and American software engineer who is the creator and lead developer of the Linux kernel since 1991. He also created the distributed version control system Git."
+    lead_text = extract + " Torvalds was one of the recipients of the 2012 Millennium Technology Prize."
+    
+    summary, facts = await _extract_wiki_summary_and_facts(title, desc, extract, lead_text)
+    assert summary is not None
+    assert len(summary) > 0
+    assert isinstance(facts, list)
+    assert len(facts) >= 1
+    assert any("Linux" in f or "software engineer" in f.lower() for f in facts)
+
+@pytest.mark.asyncio
+@patch('app.src.scraping.search_dorker.httpx.AsyncClient.get')
+async def test_search_wikipedia_success(mock_get):
+    from app.src.scraping.search_dorker import search_wikipedia
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "title": "Linus Torvalds",
+        "description": "Finnish and American software engineer",
+        "extract": "Linus Benedict Torvalds is the creator of the Linux kernel. He also created Git.",
+        "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Linus_Torvalds"}},
+        "thumbnail": {"source": "https://example.com/linus.jpg"}
+    }
+    mock_get.return_value = mock_resp
+
+    res = await search_wikipedia("Linus Torvalds")
+    assert res["title"] == "Linus Torvalds"
+    assert res["url"] == "https://en.wikipedia.org/wiki/Linus_Torvalds"
+    assert res["summary"] is not None
+    assert isinstance(res["facts"], list)
+    assert len(res["facts"]) >= 1
+    assert res["image_url"] == "https://example.com/linus.jpg"

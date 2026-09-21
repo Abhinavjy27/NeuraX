@@ -104,3 +104,49 @@ def test_generate_markdown_report_face_match_warning():
     assert "[!WARNING]" in report
     assert "The uploaded image does not match the image scraped for Tom Holland" in report
     assert "The image does not belong to this person" in report
+
+def test_generate_html_report_wikipedia():
+    identity = {
+        "canonical_name": "Linus Torvalds",
+        "overall_confidence": 0.95,
+        "wikipedia": {
+            "title": "Linus Torvalds",
+            "url": "https://en.wikipedia.org/wiki/Linus_Torvalds",
+            "summary": "Linus Benedict Torvalds is a Finnish and American software engineer who is the creator and lead developer of the Linux kernel.",
+            "facts": [
+                "Creator and lead developer of the Linux kernel since 1991",
+                "Created the Git distributed version control system in 2005",
+                "Born on 28 December 1969 in Helsinki, Finland"
+            ]
+        }
+    }
+    html = generate_html_report(identity, [], [], [])
+    assert "Wikipedia Biographical Intelligence" in html
+    assert "Linus Benedict Torvalds is a Finnish and American software engineer" in html
+    assert "Creator and lead developer of the Linux kernel since 1991" in html
+    assert "Created the Git distributed version control system in 2005" in html
+    assert "https://en.wikipedia.org/wiki/Linus_Torvalds" in html
+
+def test_generate_markdown_report_wikipedia():
+    profile = {
+        "identity": {
+            "name": "Linus Torvalds",
+            "overall_confidence": 0.95,
+            "wikipedia": {
+                "title": "Linus Torvalds",
+                "url": "https://en.wikipedia.org/wiki/Linus_Torvalds",
+                "summary": "Creator of Linux and Git.",
+                "facts": [
+                    "Creator and lead developer of the Linux kernel",
+                    "Created the Git distributed version control system"
+                ]
+            }
+        },
+        "platforms": ["Wikipedia"],
+        "evidence": {}
+    }
+    md = generate_markdown_report(profile, [])
+    assert "## Wikipedia Biographical Intelligence" in md
+    assert "Creator of Linux and Git." in md
+    assert "- Creator and lead developer of the Linux kernel" in md
+    assert "- Created the Git distributed version control system" in md
