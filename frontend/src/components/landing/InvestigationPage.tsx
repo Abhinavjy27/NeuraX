@@ -35,6 +35,7 @@ import {
   Award,
   ArrowUpDown,
   AlertTriangle,
+  Code2,
 } from 'lucide-react';
 import KnowledgeGraphView from './knowledge-graph/KnowledgeGraphView';
 import EarthBackground from '@/components/ui/earth-background';
@@ -65,6 +66,8 @@ const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
   medium: { color: '#ffffff', bg: '#18181b', icon: Globe, label: 'Medium' },
   scholar: { color: '#60a5fa', bg: '#082138', icon: GraduationCap, label: 'Google Scholar' },
   academia: { color: '#38bdf8', bg: '#082138', icon: GraduationCap, label: 'Academia.edu' },
+  leetcode: { color: '#f59e0b', bg: '#291b05', icon: Code2, label: 'LeetCode' },
+  huggingface: { color: '#fbbf24', bg: '#2a1f05', icon: Award, label: 'Hugging Face' },
   news: { color: '#f59e0b', bg: '#261706', icon: Newspaper, label: 'News / Press' },
   web: { color: '#c084fc', bg: '#1e0e33', icon: FileText, label: 'Web Source' },
 };

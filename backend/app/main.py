@@ -504,6 +504,10 @@ async def run_pipeline(job_id: str, image_path: str, context: str):
                     plat = "linkedin"
                 elif "github.com" in url:
                     plat = "github"
+                elif "leetcode.com" in url:
+                    plat = "leetcode"
+                elif "huggingface.co" in url:
+                    plat = "huggingface"
                 
                 handle = _extract_handle(item["url"], candidate_name)
                 title = item.get("title", "")
